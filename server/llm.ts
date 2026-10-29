@@ -456,7 +456,7 @@ export async function testModelConnection(settings: RuntimeSettings, profileId?:
   } catch (error) {
     const config = (() => {
       try {
-        return resolveModelConfig(settings);
+        return resolveModelConfig(settings, profileId);
       } catch {
         return null;
       }
