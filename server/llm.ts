@@ -1,0 +1,398 @@
+import fs from 'node:fs';
+import type { ModelProtocol, RuntimeSettings } from '../src/types';
+import { dataDir, secretsPath } from './paths';
+
+interface SecretsFile {
+  apiKey?: string;
+  baseUrl?: string;
+  model?: string;
+  protocol?: string;
+}
+
+export interface ModelConfig {
+  baseUrl: string;
+  model: string;
+  protocol: ModelProtocol;
+  apiKey: string;
+  timeoutMs: number;
+  maxRetries: number;
+  autoRetry: boolean;
+  provider: string;
+}
+
+export interface ModelResponse {
+  text: string;
+  model: string;
+  provider: string;
+  durationMs: number;
+  usage?: Record<string, unknown>;
+}
+
+export class ModelError extends Error {
+  status?: number;
+  code: string;
+
+  constructor(message: string, code = 'MODEL_ERROR', status?: number) {
+    super(message);
+    this.name = 'ModelError';
+    this.code = code;
+    this.status = status;
+  }
+}
+
+const readSecrets = (): SecretsFile => {
+  try {
+    if (!fs.existsSync(secretsPath)) return {};
+    const parsed = JSON.parse(fs.readFileSync(secretsPath, 'utf8')) as SecretsFile;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+};
+
+const writeSecrets = (next: SecretsFile) => {
+  fs.mkdirSync(dataDir, { recursive: true });
+  fs.writeFileSync(secretsPath, JSON.stringify(next, null, 2), 'utf8');
+};
+
+export const setModelApiKey = (apiKey: string) => {
+  const trimmed = apiKey.trim();
+  if (!trimmed) throw new ModelError('API Key 不能为空', 'INVALID_API_KEY');
+  writeSecrets({ ...readSecrets(), apiKey: trimmed });
+};
+
+export const clearModelApiKey = () => {
+  const next = { ...readSecrets() };
+  delete next.apiKey;
+  writeSecrets(next);
+};
+
+export const hasModelApiKey = () => Boolean(readSecrets().apiKey?.trim());
+
+const normalizeBaseUrl = (value: string) => {
+  let url = value.trim().replace(/\/+$/, '');
+  url = url.replace(/\/(chat\/completions|responses)$/i, '');
+  if (!/^https?:\/\//i.test(url)) {
+    throw new ModelError('模型服务地址必须以 http:// 或 https:// 开头', 'INVALID_BASE_URL');
+  }
+  return url;
+};
+
+const normalizeProtocol = (value?: string): ModelProtocol =>
+  value === 'responses' ? 'responses' : 'chat';
+
+const providerLabel = (baseUrl: string) => {
+  try {
+    return new URL(baseUrl).host || 'OpenAI-compatible';
+  } catch {
+    return 'OpenAI-compatible';
+  }
+};
+
+export function resolveModelConfig(settings: RuntimeSettings): ModelConfig {
+  const secrets = readSecrets();
+  const baseUrl = normalizeBaseUrl(
+    process.env.KEXU_MODEL_BASE_URL ||
+      secrets.baseUrl ||
+      settings.modelBaseUrl ||
+      'http://127.0.0.1:15721/v1'
+  );
+  const model = (
+    process.env.KEXU_MODEL_NAME ||
+    secrets.model ||
+    settings.modelName ||
+    settings.reasoningModel ||
+    'deepseek-v4.1-flash'
+  ).trim();
+  const protocol = normalizeProtocol(
+    process.env.KEXU_MODEL_PROTOCOL || secrets.protocol || settings.modelProtocol
+  );
+  const apiKey = process.env.KEXU_MODEL_API_KEY || secrets.apiKey || '';
+  const timeoutMs = Math.min(
+    Math.max(Number(process.env.KEXU_MODEL_TIMEOUT_MS || settings.requestTimeoutMs) || 120_000, 5_000),
+    600_000
+  );
+  const maxRetries = Math.min(Math.max(Number(settings.maxRetries) || 0, 0), 5);
+
+  return {
+    baseUrl,
+    model,
+    protocol,
+    apiKey,
+    timeoutMs,
+    maxRetries,
+    autoRetry: settings.autoRetry !== false,
+    provider: providerLabel(baseUrl)
+  };
+}
+
+export function describeModelConfig(settings: RuntimeSettings) {
+  try {
+    const config = resolveModelConfig(settings);
+    return {
+      baseUrl: config.baseUrl,
+      model: config.model,
+      protocol: config.protocol,
+      provider: config.provider,
+      apiKeyConfigured: Boolean(config.apiKey),
+      configured: Boolean(config.baseUrl && config.model)
+    };
+  } catch {
+    return {
+      baseUrl: settings.modelBaseUrl,
+      model: settings.modelName,
+      protocol: settings.modelProtocol,
+      provider: 'unconfigured',
+      apiKeyConfigured: false,
+      configured: false
+    };
+  }
+}
+
+const isRetryable = (error: unknown) => {
+  if (error instanceof ModelError) {
+    if (!error.status) return true;
+    return error.status === 408 || error.status === 409 || error.status === 429 || error.status >= 500;
+  }
+  return true;
+};
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const extractResponsesText = (payload: Record<string, unknown>) => {
+  if (typeof payload.output_text === 'string' && payload.output_text.trim()) {
+    return payload.output_text;
+  }
+  const output = payload.output;
+  if (!Array.isArray(output)) return '';
+  const parts: string[] = [];
+  for (const item of output) {
+    if (!item || typeof item !== 'object') continue;
+    const content = (item as { content?: unknown }).content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      if (!block || typeof block !== 'object') continue;
+      const text = (block as { text?: unknown }).text;
+      if (typeof text === 'string' && text.trim()) parts.push(text);
+    }
+  }
+  return parts.join('\n');
+};
+
+const extractChatText = (payload: Record<string, unknown>) => {
+  const choices = payload.choices;
+  if (!Array.isArray(choices) || !choices.length) return '';
+  const message = (choices[0] as { message?: { content?: unknown } }).message;
+  const content = message?.content;
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) =>
+        part && typeof part === 'object' && typeof (part as { text?: unknown }).text === 'string'
+          ? ((part as { text: string }).text ?? '')
+          : ''
+      )
+      .join('');
+  }
+  return '';
+};
+
+export interface ChatMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+export interface ModelRequest {
+  messages: ChatMessage[];
+  json?: boolean;
+  temperature?: number;
+  maxTokens?: number;
+}
+
+async function requestOnce(config: ModelConfig, request: ModelRequest): Promise<ModelResponse> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), config.timeoutMs);
+  const startedAt = Date.now();
+  const base = config.baseUrl;
+  const isResponses = config.protocol === 'responses';
+  const url = isResponses ? `${base}/responses` : `${base}/chat/completions`;
+  const body = isResponses
+    ? {
+        model: config.model,
+        input: request.messages.map((message) => ({
+          role: message.role,
+          content: [{ type: message.role === 'assistant' ? 'output_text' : 'input_text', text: message.content }]
+        })),
+        max_output_tokens: request.maxTokens ?? 2200,
+        ...(request.json ? { text: { format: { type: 'json_object' } } } : {})
+      }
+    : {
+        model: config.model,
+        messages: request.messages,
+        temperature: request.temperature ?? 0.7,
+        max_tokens: request.maxTokens ?? 2200,
+        stream: false,
+        ...(request.json ? { response_format: { type: 'json_object' } } : {})
+      };
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {})
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal
+    });
+
+    const raw = await response.text();
+    if (!response.ok) {
+      let detail = raw.slice(0, 600);
+      try {
+        const parsed = JSON.parse(raw) as { error?: { message?: string } | string };
+        detail =
+          typeof parsed.error === 'string'
+            ? parsed.error
+            : parsed.error?.message || JSON.stringify(parsed).slice(0, 600);
+      } catch {
+        // Keep the raw snippet.
+      }
+      throw new ModelError(
+        `模型服务返回 ${response.status}：${detail || response.statusText}`,
+        'MODEL_HTTP_ERROR',
+        response.status
+      );
+    }
+
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      throw new ModelError('模型服务返回了无法解析的响应', 'MODEL_BAD_PAYLOAD');
+    }
+
+    const text = isResponses ? extractResponsesText(payload) : extractChatText(payload);
+    if (!text.trim()) {
+      throw new ModelError('模型返回了空内容', 'MODEL_EMPTY_RESPONSE');
+    }
+
+    return {
+      text,
+      model: typeof payload.model === 'string' ? payload.model : config.model,
+      provider: config.provider,
+      durationMs: Date.now() - startedAt,
+      usage:
+        payload.usage && typeof payload.usage === 'object'
+          ? (payload.usage as Record<string, unknown>)
+          : undefined
+    };
+  } catch (error) {
+    if (error instanceof ModelError) throw error;
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new ModelError(`模型调用超时（${config.timeoutMs} ms）`, 'MODEL_TIMEOUT');
+    }
+    throw new ModelError(
+      error instanceof Error ? `无法连接模型服务：${error.message}` : '无法连接模型服务',
+      'MODEL_NETWORK_ERROR'
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function callModel(
+  settings: RuntimeSettings,
+  request: ModelRequest
+): Promise<ModelResponse> {
+  const config = resolveModelConfig(settings);
+  const attempts = 1 + (config.autoRetry ? config.maxRetries : 0);
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await requestOnce(config, request);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts - 1 || !isRetryable(error)) break;
+      await wait(500 * (attempt + 1));
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new ModelError('模型调用失败', 'MODEL_ERROR');
+}
+
+export function parseJsonLoose<T = unknown>(text: string): T {
+  let content = text.trim();
+  const fence = /^```(?:json)?\s*([\s\S]*?)```$/i.exec(content);
+  if (fence) content = fence[1].trim();
+
+  try {
+    return JSON.parse(content) as T;
+  } catch {
+    // Fall through to bracket extraction.
+  }
+
+  const objectStart = content.indexOf('{');
+  const arrayStart = content.indexOf('[');
+  const start =
+    objectStart < 0 ? arrayStart : arrayStart < 0 ? objectStart : Math.min(objectStart, arrayStart);
+  if (start < 0) {
+    throw new ModelError('模型输出中没有 JSON 内容', 'MODEL_JSON_MISSING');
+  }
+  const open = content[start];
+  const close = open === '{' ? '}' : ']';
+  const end = content.lastIndexOf(close);
+  if (end <= start) {
+    throw new ModelError('模型输出的 JSON 不完整', 'MODEL_JSON_TRUNCATED');
+  }
+  try {
+    return JSON.parse(content.slice(start, end + 1)) as T;
+  } catch (error) {
+    throw new ModelError(
+      `模型输出的 JSON 无法解析：${error instanceof Error ? error.message : '未知错误'}`,
+      'MODEL_JSON_INVALID'
+    );
+  }
+}
+
+export async function testModelConnection(settings: RuntimeSettings) {
+  const startedAt = Date.now();
+  try {
+    const config = resolveModelConfig(settings);
+    const response = await callModel(settings, {
+      messages: [
+        { role: 'system', content: '你是连通性检查助手。' },
+        { role: 'user', content: '只回复两个字：正常' }
+      ],
+      temperature: 0,
+      maxTokens: 24
+    });
+    return {
+      ok: true,
+      latencyMs: Date.now() - startedAt,
+      model: response.model,
+      provider: response.provider,
+      protocol: config.protocol,
+      message: response.text.trim().slice(0, 80)
+    };
+  } catch (error) {
+    const config = (() => {
+      try {
+        return resolveModelConfig(settings);
+      } catch {
+        return null;
+      }
+    })();
+    return {
+      ok: false,
+      latencyMs: Date.now() - startedAt,
+      model: config?.model ?? settings.modelName,
+      provider: config?.provider ?? 'unconfigured',
+      protocol: config?.protocol ?? settings.modelProtocol,
+      message: error instanceof Error ? error.message : '模型连接失败'
+    };
+  }
+}
