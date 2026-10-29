@@ -80,7 +80,12 @@ export function readDb(): Database {
       brand: {
         ...seedSettings.brand,
         ...(storedSettings.brand ?? {})
-      }
+      },
+      modelProfiles:
+        storedSettings.modelProfiles?.length
+          ? storedSettings.modelProfiles
+          : seedSettings.modelProfiles,
+      activeModelId: storedSettings.activeModelId || seedSettings.activeModelId
     };
     database.memory = {
       ...seedTeacherMemory,

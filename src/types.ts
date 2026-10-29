@@ -19,6 +19,22 @@ export type JobStatus = 'idle' | 'queued' | 'running' | 'done' | 'error';
 export type TtsEngine = 'edge' | 'sapi' | 'mimo' | 'none';
 export type AsrEngine = 'browser' | 'mimo' | 'none';
 export type ModelProtocol = 'chat' | 'responses';
+
+/**
+ * A reusable model connection. Any OpenAI-compatible service (or a Responses
+ * API endpoint) can be saved as a profile with its own key and switched at will.
+ */
+export interface ModelProfile {
+  id: string;
+  name: string;
+  provider: string;
+  baseUrl: string;
+  modelName: string;
+  protocol: ModelProtocol;
+  temperature: number;
+  maxTokens: number;
+  apiKeyConfigured?: boolean;
+}
 export type GenerationEngine = 'model' | 'local-fallback' | 'media' | 'system';
 export type AlignmentMethod = 'segment' | 'text' | 'estimated' | 'none';
 
@@ -454,6 +470,8 @@ export interface BrandConfig {
 
 export interface RuntimeSettings {
   reasoningModel: string;
+  modelProfiles: ModelProfile[];
+  activeModelId: string;
   visualModel: string;
   ttsModel: string;
   asrModel: string;

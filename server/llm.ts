@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import type { ModelProtocol, RuntimeSettings } from '../src/types';
+import type { ModelProfile, ModelProtocol, RuntimeSettings } from '../src/types';
 import { dataDir, secretsPath } from './paths';
 
 export interface SecretsFile {
@@ -8,6 +8,7 @@ export interface SecretsFile {
   model?: string;
   protocol?: string;
   mimoApiKey?: string;
+  profileKeys?: Record<string, string>;
 }
 
 export interface ModelConfig {
@@ -70,6 +71,29 @@ export const clearModelApiKey = () => {
 
 export const hasModelApiKey = () => Boolean(readSecrets().apiKey?.trim());
 
+export const setProfileApiKey = (profileId: string, apiKey: string) => {
+  const trimmed = apiKey.trim();
+  if (!trimmed) throw new ModelError('API Key 不能为空', 'INVALID_API_KEY');
+  const secrets = readSecrets();
+  writeSecrets({
+    ...secrets,
+    profileKeys: { ...(secrets.profileKeys ?? {}), [profileId]: trimmed }
+  });
+};
+
+export const clearProfileApiKey = (profileId: string) => {
+  const secrets = readSecrets();
+  const next = { ...secrets, profileKeys: { ...(secrets.profileKeys ?? {}) } };
+  delete next.profileKeys?.[profileId];
+  writeSecrets(next);
+};
+
+export const readProfileKey = (profileId: string) =>
+  (process.env.KEXU_MODEL_API_KEY || readSecrets().profileKeys?.[profileId] || '').trim();
+
+export const hasProfileApiKey = (profileId: string) =>
+  Boolean((process.env.KEXU_MODEL_API_KEY || readSecrets().profileKeys?.[profileId] || '').trim());
+
 export const setMimoApiKey = (apiKey: string) => {
   const trimmed = apiKey.trim();
   if (!trimmed) throw new ModelError('MiMo API Key 不能为空', 'INVALID_API_KEY');
@@ -97,33 +121,67 @@ const normalizeBaseUrl = (value: string) => {
 const normalizeProtocol = (value?: string): ModelProtocol =>
   value === 'responses' ? 'responses' : 'chat';
 
-const providerLabel = (baseUrl: string) => {
+const KNOWN_PROVIDERS: Array<{ match: string; name: string }> = [
+  { match: 'openai.com', name: 'OpenAI' },
+  { match: 'api.openai', name: 'OpenAI' },
+  { match: 'deepseek.com', name: 'DeepSeek' },
+  { match: 'open.bigmodel.cn', name: '智谱 GLM' },
+  { match: 'dashscope', name: '通义千问' },
+  { match: 'moonshot.cn', name: 'Moonshot' },
+  { match: 'xiaomimimo.com', name: 'MiMo' },
+  { match: 'anthropic.com', name: 'Anthropic' },
+  { match: 'localhost', name: '本地服务' },
+  { match: '127.0.0.1', name: '本地代理' }
+];
+
+const providerLabel = (baseUrl: string, declared?: string) => {
+  const declaredName = (declared ?? '').trim();
+  if (declaredName && declaredName !== 'openai-compatible' && declaredName !== 'custom') {
+    return declaredName;
+  }
   try {
-    return new URL(baseUrl).host || 'OpenAI-compatible';
+    const host = new URL(baseUrl).host.toLowerCase();
+    const hit = KNOWN_PROVIDERS.find((item) => host.includes(item.match));
+    if (hit) return hit.name;
+    if (declaredName === 'custom') return '自定义服务';
+    return host || 'OpenAI-compatible';
   } catch {
-    return 'OpenAI-compatible';
+    return declaredName || 'OpenAI-compatible';
   }
 };
 
-export function resolveModelConfig(settings: RuntimeSettings): ModelConfig {
+export function resolveModelConfig(
+  settings: RuntimeSettings,
+  profileId?: string
+): ModelConfig {
   const secrets = readSecrets();
+  const profiles = settings.modelProfiles ?? [];
+  const wanted = profileId ?? settings.activeModelId;
+  const profile: ModelProfile | undefined =
+    profiles.find((item) => item.id === wanted) ?? profiles[0];
   const baseUrl = normalizeBaseUrl(
     process.env.KEXU_MODEL_BASE_URL ||
+      profile?.baseUrl ||
       secrets.baseUrl ||
       settings.modelBaseUrl ||
       'http://127.0.0.1:15721/v1'
   );
   const model = (
     process.env.KEXU_MODEL_NAME ||
-    secrets.model ||
-    settings.modelName ||
-    settings.reasoningModel ||
-    'deepseek-v4.1-flash'
+      profile?.modelName ||
+      secrets.model ||
+      settings.modelName ||
+      settings.reasoningModel ||
+      'deepseek-v4.1-flash'
   ).trim();
   const protocol = normalizeProtocol(
-    process.env.KEXU_MODEL_PROTOCOL || secrets.protocol || settings.modelProtocol
+    process.env.KEXU_MODEL_PROTOCOL || profile?.protocol || secrets.protocol || settings.modelProtocol
   );
-  const apiKey = process.env.KEXU_MODEL_API_KEY || secrets.apiKey || '';
+  const apiKey =
+    process.env.KEXU_MODEL_API_KEY ||
+    (profile ? secrets.profileKeys?.[profile.id] ?? '' : '') ||
+    secrets.apiKey ||
+    '';
   const timeoutMs = Math.min(
     Math.max(Number(process.env.KEXU_MODEL_TIMEOUT_MS || settings.requestTimeoutMs) || 120_000, 5_000),
     600_000
@@ -319,9 +377,10 @@ async function requestOnce(config: ModelConfig, request: ModelRequest): Promise<
 
 export async function callModel(
   settings: RuntimeSettings,
-  request: ModelRequest
+  request: ModelRequest,
+  profileId?: string
 ): Promise<ModelResponse> {
-  const config = resolveModelConfig(settings);
+  const config = resolveModelConfig(settings, profileId);
   const attempts = 1 + (config.autoRetry ? config.maxRetries : 0);
   let lastError: unknown;
 
@@ -374,10 +433,10 @@ export function parseJsonLoose<T = unknown>(text: string): T {
   }
 }
 
-export async function testModelConnection(settings: RuntimeSettings) {
+export async function testModelConnection(settings: RuntimeSettings, profileId?: string) {
   const startedAt = Date.now();
   try {
-    const config = resolveModelConfig(settings);
+    const config = resolveModelConfig(settings, profileId);
     const response = await callModel(settings, {
       messages: [
         { role: 'system', content: '你是连通性检查助手。' },
@@ -385,7 +444,7 @@ export async function testModelConnection(settings: RuntimeSettings) {
       ],
       temperature: 0,
       maxTokens: 24
-    });
+    }, profileId);
     return {
       ok: true,
       latencyMs: Date.now() - startedAt,
@@ -409,6 +468,47 @@ export async function testModelConnection(settings: RuntimeSettings) {
       provider: config?.provider ?? 'unconfigured',
       protocol: config?.protocol ?? settings.modelProtocol,
       message: error instanceof Error ? error.message : '模型连接失败'
+    };
+  }
+}
+
+/**
+ * Lists the models a service exposes. Works with any OpenAI-compatible
+ * endpoint and is the fastest way to pick a working model name.
+ */
+export async function listServiceModels(
+  baseUrl: string,
+  apiKey?: string
+): Promise<{ models: string[]; provider: string; error?: string }> {
+  const base = baseUrl.trim().replace(/\/+$/, '').replace(/\/(chat\/completions|responses)$/i, '');
+  if (!/^https?:\/\//i.test(base)) {
+    return { models: [], provider: '', error: '服务地址必须以 http:// 或 https:// 开头' };
+  }
+  try {
+    const response = await fetch(`${base}/models`, {
+      headers: {
+        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {})
+      }
+    });
+    const raw = await response.text();
+    if (!response.ok) {
+      return {
+        models: [],
+        provider: providerLabel(base),
+        error: `服务返回 ${response.status}：${raw.slice(0, 200)}`
+      };
+    }
+    const payload = JSON.parse(raw) as { data?: Array<{ id?: string }> };
+    const models = (payload.data ?? [])
+      .map((item) => (item && typeof item.id === 'string' ? item.id : ''))
+      .filter(Boolean)
+      .sort();
+    return { models, provider: providerLabel(base) };
+  } catch (error) {
+    return {
+      models: [],
+      provider: providerLabel(base),
+      error: error instanceof Error ? error.message : '无法读取模型列表'
     };
   }
 }

@@ -38,11 +38,16 @@ import {
   callModel,
   clearMimoApiKey,
   clearModelApiKey,
+  clearProfileApiKey,
   hasMimoApiKey,
   hasModelApiKey,
+  hasProfileApiKey,
+  listServiceModels,
   parseJsonLoose,
+  readProfileKey,
   setMimoApiKey,
   setModelApiKey,
+  setProfileApiKey,
   testModelConnection
 } from './llm';
 import {
@@ -237,11 +242,18 @@ const applySlideEngine = (
   });
 };
 
-const publicSettings = () => ({
-  ...readDb().settings,
-  apiKeyConfigured: hasModelApiKey(),
-  mimoApiKeyConfigured: hasMimoApiKey()
-});
+const publicSettings = () => {
+  const settings = readDb().settings;
+  return {
+    ...settings,
+    apiKeyConfigured: hasModelApiKey(),
+    mimoApiKeyConfigured: hasMimoApiKey(),
+    modelProfiles: (settings.modelProfiles ?? []).map((profile) => ({
+      ...profile,
+      apiKeyConfigured: hasProfileApiKey(profile.id)
+    }))
+  };
+};
 
 const subjectHints = [
   '语文',
@@ -2362,6 +2374,127 @@ app.patch('/api/settings', (req, res) => {
   }
   writeDb(db);
   res.json(publicSettings());
+});
+
+
+/* ------------------------------------------------------------------ */
+/* Generic model connections                                           */
+/* ------------------------------------------------------------------ */
+
+const sanitizeProfile = (input: Record<string, unknown>, fallbackId: string) => {
+  const baseUrl = String(input.baseUrl || '').trim();
+  const modelName = String(input.modelName || '').trim();
+  if (!baseUrl) throw new Error('请填写模型服务地址');
+  if (!modelName) throw new Error('请填写模型名称');
+  return {
+    id: String(input.id || fallbackId).replace(/[^a-zA-Z0-9_-]/g, '-') || fallbackId,
+    name: String(input.name || modelName).trim().slice(0, 40) || modelName,
+    provider: String(input.provider || 'openai-compatible').trim() || 'openai-compatible',
+    baseUrl,
+    modelName,
+    protocol: (input.protocol === 'responses' ? 'responses' : 'chat') as 'chat' | 'responses',
+    temperature: Math.min(Math.max(Number(input.temperature) || 0.6, 0), 2),
+    maxTokens: Math.min(Math.max(Number(input.maxTokens) || 2200, 256), 32000)
+  };
+};
+
+app.get('/api/models/profiles', (_req, res) => {
+  res.json({ profiles: publicSettings().modelProfiles });
+});
+
+app.post('/api/models/profiles', (req, res) => {
+  try {
+    const db = readDb();
+    const id = `model-${Date.now().toString(36)}`;
+    const profile = sanitizeProfile((req.body || {}) as Record<string, unknown>, id);
+    db.settings.modelProfiles = [...(db.settings.modelProfiles ?? []), profile];
+    db.settings.activeModelId = db.settings.activeModelId || profile.id;
+    writeDb(db);
+    res.json({ profiles: publicSettings().modelProfiles });
+  } catch (error) {
+    res.status(400).json({
+      error: error instanceof Error ? error.message : '连接创建失败'
+    });
+  }
+});
+
+app.patch('/api/models/profiles/:id', (req, res) => {
+  try {
+    const db = readDb();
+    const body = (req.body || {}) as Record<string, unknown>;
+    let found = false;
+    db.settings.modelProfiles = (db.settings.modelProfiles ?? []).map((profile) => {
+      if (profile.id !== req.params.id) return profile;
+      found = true;
+      return sanitizeProfile({ ...profile, ...body, id: profile.id }, profile.id);
+    });
+    if (!found) {
+      res.status(404).json({ error: '连接不存在' });
+      return;
+    }
+    if (body.active) db.settings.activeModelId = req.params.id;
+    writeDb(db);
+    res.json({ profiles: publicSettings().modelProfiles, activeModelId: db.settings.activeModelId });
+  } catch (error) {
+    res.status(400).json({
+      error: error instanceof Error ? error.message : '连接保存失败'
+    });
+  }
+});
+
+app.delete('/api/models/profiles/:id', (req, res) => {
+  const db = readDb();
+  const remaining = (db.settings.modelProfiles ?? []).filter(
+    (profile) => profile.id !== req.params.id
+  );
+  if (remaining.length === (db.settings.modelProfiles ?? []).length) {
+    res.status(404).json({ error: '连接不存在' });
+    return;
+  }
+  db.settings.modelProfiles = remaining;
+  if (db.settings.activeModelId === req.params.id) {
+    db.settings.activeModelId = remaining[0]?.id ?? '';
+  }
+  clearProfileApiKey(req.params.id);
+  writeDb(db);
+  res.json({ profiles: publicSettings().modelProfiles, activeModelId: db.settings.activeModelId });
+});
+
+app.post('/api/models/profiles/:id/api-key', (req, res) => {
+  try {
+    const key = String(req.body?.apiKey || '').trim();
+    if (!key) {
+      res.status(400).json({ error: 'API Key 不能为空' });
+      return;
+    }
+    setProfileApiKey(req.params.id, key);
+    res.json({ profiles: publicSettings().modelProfiles });
+  } catch (error) {
+    res.status(400).json({
+      error: error instanceof Error ? error.message : 'API Key 保存失败'
+    });
+  }
+});
+
+app.delete('/api/models/profiles/:id/api-key', (req, res) => {
+  clearProfileApiKey(req.params.id);
+  res.json({ profiles: publicSettings().modelProfiles });
+});
+
+app.post('/api/models/profiles/:id/test', async (req, res) => {
+  const db = readDb();
+  const result = await testModelConnection(db.settings, req.params.id);
+  res.json(result);
+});
+
+app.post('/api/models/discover', async (req, res) => {
+  const body = (req.body || {}) as Record<string, unknown>;
+  const profileId = String(body.profileId || '');
+  const db = readDb();
+  const profile = (db.settings.modelProfiles ?? []).find((item) => item.id === profileId);
+  const baseUrl = String(body.baseUrl || profile?.baseUrl || '');
+  const apiKey = String(body.apiKey || (profileId ? readProfileKey(profileId) : ''));
+  res.json(await listServiceModels(baseUrl, apiKey));
 });
 
 app.post('/api/settings/model/test', async (req, res) => {

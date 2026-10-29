@@ -13,6 +13,7 @@ import type {
   MediaArtifact,
   MediaKind,
   MediaTriggerPlacement,
+  ModelProfile,
   ProductionEngine,
   ProductionStage,
   RuntimeSettings,
@@ -527,6 +528,61 @@ export const api = {
     }>(`/api/projects/${projectId}/course-html`, {
       method: 'POST',
       body: JSON.stringify({})
+    }),
+
+  modelProfiles: () =>
+    request<{ profiles: ModelProfile[] }>('/api/models/profiles'),
+
+  createModelProfile: (payload: Partial<ModelProfile>) =>
+    request<{ profiles: ModelProfile[] }>('/api/models/profiles', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+
+  updateModelProfile: (id: string, payload: Partial<ModelProfile> & { active?: boolean }) =>
+    request<{ profiles: ModelProfile[]; activeModelId: string }>(
+      `/api/models/profiles/${id}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(payload)
+      }
+    ),
+
+  deleteModelProfile: (id: string) =>
+    request<{ profiles: ModelProfile[]; activeModelId: string }>(
+      `/api/models/profiles/${id}`,
+      { method: 'DELETE' }
+    ),
+
+  setProfileKey: (id: string, apiKey: string) =>
+    request<{ profiles: ModelProfile[] }>(`/api/models/profiles/${id}/api-key`, {
+      method: 'POST',
+      body: JSON.stringify({ apiKey })
+    }),
+
+  clearProfileKey: (id: string) =>
+    request<{ profiles: ModelProfile[] }>(`/api/models/profiles/${id}/api-key`, {
+      method: 'DELETE'
+    }),
+
+  testModelProfile: (id: string) =>
+    request<{
+      ok: boolean;
+      latencyMs: number;
+      model: string;
+      provider: string;
+      protocol: string;
+      message: string;
+      error?: string;
+    }>(`/api/models/profiles/${id}/test`, {
+      method: 'POST',
+      body: JSON.stringify({})
+    }),
+
+  discoverModels: (payload: { baseUrl?: string; apiKey?: string; profileId?: string }) =>
+    request<{ models: string[]; provider: string; error?: string }>('/api/models/discover', {
+      method: 'POST',
+      body: JSON.stringify(payload)
     }),
 
   resetSystem: () =>

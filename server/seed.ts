@@ -1,5 +1,5 @@
 import type {
-  ActivityEvent,
+  ModelProfile,  ActivityEvent,
   AgentProfile,
   AgentSkill,
   CourseProject,
@@ -559,8 +559,23 @@ const seedVideoFrameSchemes: VideoFrameScheme[] = [
   }
 ];
 
+export const seedModelProfiles: ModelProfile[] = [
+  {
+    id: 'model-default',
+    name: '默认连接',
+    provider: 'openai-compatible',
+    baseUrl: 'http://127.0.0.1:15721/v1',
+    modelName: 'deepseek-v4.1-flash',
+    protocol: 'chat',
+    temperature: 0.6,
+    maxTokens: 2200
+  }
+];
+
 export const seedSettings: RuntimeSettings = {
   reasoningModel: 'deepseek-v4.1-flash',
+  modelProfiles: seedModelProfiles,
+  activeModelId: 'model-default',
   visualModel: '本地分镜引擎',
   ttsModel: 'Edge 神经语音',
   asrModel: 'MiMo 语音识别',

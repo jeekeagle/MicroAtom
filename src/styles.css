@@ -12891,3 +12891,188 @@ kbd {
   color: var(--muted-2);
   font-size: 11px;
 }
+
+/* ============ Generic model connections ============ */
+
+.model-panel {
+  display: grid;
+  grid-template-columns: 236px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.model-profile-list {
+  padding: 11px 12px 12px;
+  background: var(--workspace-deep);
+  border: 1px solid var(--line-soft);
+  border-radius: 5px;
+}
+
+.model-profile-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 9px;
+}
+
+.model-profile-list-head > span {
+  color: var(--ink-2);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.model-profile-item {
+  width: 100%;
+  padding: 8px 9px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.model-profile-item:hover {
+  background: #ffffff;
+}
+
+.model-profile-item.is-active {
+  background: #ffffff;
+  border-color: var(--line);
+  box-shadow: var(--shadow-sm);
+}
+
+.model-profile-dot {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #eef1f4;
+  border-radius: 50%;
+  color: var(--muted);
+}
+
+.model-profile-item.is-active .model-profile-dot {
+  background: var(--teal-soft);
+  color: var(--teal-dark);
+}
+
+.model-profile-item > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.model-profile-item strong {
+  display: block;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-profile-item small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted-2);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-profile-item em {
+  flex: none;
+  padding: 2px 6px;
+  background: var(--teal-soft);
+  border-radius: 3px;
+  color: var(--teal-dark);
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.model-profile-editor {
+  min-width: 0;
+  padding: 13px 14px 14px;
+  background: var(--workspace);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+
+.model-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 11px;
+}
+
+.model-model-field {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.model-model-field input {
+  flex: 1;
+  min-width: 0;
+}
+
+.model-key-row {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+}
+
+.model-key-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding-bottom: 2px;
+}
+
+.model-editor-actions {
+  margin-top: 14px;
+  padding-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--line-soft);
+}
+
+.model-test-result {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  background: var(--workspace-deep);
+  border-radius: 4px;
+  color: var(--ink-2);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.model-empty {
+  margin: 0;
+  padding: 18px 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (max-width:1080px) {
+  .model-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .model-editor-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .model-key-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

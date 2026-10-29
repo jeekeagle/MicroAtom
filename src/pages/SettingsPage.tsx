@@ -28,6 +28,7 @@ import { useApp } from '../context/AppContext';
 import { api } from '../lib/api';
 import type { Capabilities, RuntimeSettings } from '../types';
 import { Button, SectionLabel } from '../components/ui';
+import { ModelConnectionPanel } from '../components/ModelConnectionPanel';
 import { VideoFrameSettings } from '../components/VideoFrameSettings';
 
 const edgeVoiceOptions = [
@@ -289,7 +290,7 @@ export function SettingsPage() {
                   onChange={(event) => set('reasoningModel', event.target.value)}
                   placeholder="模型名称或服务标识"
                 />
-                <small>用于讲稿、教学诊断、价值主线与质检。</small>
+                <small>用于讲稿、教学诊断、价值主线与质检，默认跟随当前模型连接。</small>
               </label>
               <label className="field">
                 <span>视觉与课件模型</span>
@@ -298,41 +299,14 @@ export function SettingsPage() {
                   onChange={(event) => set('visualModel', event.target.value)}
                   placeholder="例如：本地分镜引擎"
                 />
-                <small>用于分镜规划与页面版式生成。</small>
+                <small>用于分镜规划与页面版式生成，留空则跟随当前模型连接。</small>
               </label>
             </div>
-            <div className="settings-form-grid">
-              <label className="field">
-                <span>模型名称</span>
-                <input
-                  value={form.modelName}
-                  onChange={(event) => set('modelName', event.target.value)}
-                  placeholder="例如：deepseek-v4.1-flash"
-                />
-                <small>模型服务实际提供的模型标识。</small>
-              </label>
-              <label className="field">
-                <span>模型服务地址</span>
-                <input
-                  value={form.modelBaseUrl}
-                  onChange={(event) => set('modelBaseUrl', event.target.value)}
-                  placeholder="http://127.0.0.1:15721/v1"
-                />
-                <small>OpenAI 兼容接口地址，换电脑后需要重填。</small>
-              </label>
-              <label className="field">
-                <span>接口协议</span>
-                <select
-                  value={form.modelProtocol}
-                  onChange={(event) =>
-                    set('modelProtocol', event.target.value as RuntimeSettings['modelProtocol'])
-                  }
-                >
-                  <option value="chat">chat/completions</option>
-                  <option value="responses">responses</option>
-                </select>
-              </label>
-            </div>
+            <ModelConnectionPanel
+              settings={form}
+              onSettings={(next) => setForm(next)}
+              notify={showToast}
+            />
             <div className="settings-form-grid">
               <label className="field">
                 <span>API Base</span>
