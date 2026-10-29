@@ -69,9 +69,18 @@ export function readDb(): Database {
   try {
     database = JSON.parse(fs.readFileSync(storePath, 'utf8')) as Database;
     // Normalize stores created by earlier versions.
+    const storedSettings = database.settings ?? seedSettings;
     database.settings = {
       ...seedSettings,
-      ...database.settings
+      ...storedSettings,
+      videoFrame: {
+        ...seedSettings.videoFrame,
+        ...(storedSettings.videoFrame ?? {})
+      },
+      brand: {
+        ...seedSettings.brand,
+        ...(storedSettings.brand ?? {})
+      }
     };
     database.memory = {
       ...seedTeacherMemory,

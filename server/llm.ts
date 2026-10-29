@@ -2,11 +2,12 @@ import fs from 'node:fs';
 import type { ModelProtocol, RuntimeSettings } from '../src/types';
 import { dataDir, secretsPath } from './paths';
 
-interface SecretsFile {
+export interface SecretsFile {
   apiKey?: string;
   baseUrl?: string;
   model?: string;
   protocol?: string;
+  mimoApiKey?: string;
 }
 
 export interface ModelConfig {
@@ -40,7 +41,7 @@ export class ModelError extends Error {
   }
 }
 
-const readSecrets = (): SecretsFile => {
+export const readSecrets = (): SecretsFile => {
   try {
     if (!fs.existsSync(secretsPath)) return {};
     const parsed = JSON.parse(fs.readFileSync(secretsPath, 'utf8')) as SecretsFile;
@@ -50,7 +51,7 @@ const readSecrets = (): SecretsFile => {
   }
 };
 
-const writeSecrets = (next: SecretsFile) => {
+export const writeSecrets = (next: SecretsFile) => {
   fs.mkdirSync(dataDir, { recursive: true });
   fs.writeFileSync(secretsPath, JSON.stringify(next, null, 2), 'utf8');
 };
@@ -68,6 +69,21 @@ export const clearModelApiKey = () => {
 };
 
 export const hasModelApiKey = () => Boolean(readSecrets().apiKey?.trim());
+
+export const setMimoApiKey = (apiKey: string) => {
+  const trimmed = apiKey.trim();
+  if (!trimmed) throw new ModelError('MiMo API Key 不能为空', 'INVALID_API_KEY');
+  writeSecrets({ ...readSecrets(), mimoApiKey: trimmed });
+};
+
+export const clearMimoApiKey = () => {
+  const next = { ...readSecrets() };
+  delete next.mimoApiKey;
+  writeSecrets(next);
+};
+
+export const hasMimoApiKey = () =>
+  Boolean((process.env.KEXU_MIMO_API_KEY || readSecrets().mimoApiKey || '').trim());
 
 const normalizeBaseUrl = (value: string) => {
   let url = value.trim().replace(/\/+$/, '');

@@ -128,6 +128,11 @@ export function TeacherTrialOverlay({
   const recognitionWantedRef = useRef(false);
   const recognitionRestartRef = useRef<number | null>(null);
   const recognitionFailuresRef = useRef(0);
+  const asrWantedRef = useRef(false);
+  const chunkRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunkTimerRef = useRef<number | null>(null);
+  const asrQueueRef = useRef<Blob[]>([]);
+  const asrBusyRef = useRef(false);
 
   const currentSlide = slides[Math.min(selectedIndex, Math.max(0, slides.length - 1))];
   const currentSections = useMemo(() => {
@@ -136,7 +141,9 @@ export function TeacherTrialOverlay({
       (section) => section.id === currentSlide.sectionId
     );
   }, [currentSlide, project.script?.sections]);
-  const hasRecognizer = Boolean(getSpeechRecognition());
+  const asrEngine = data?.settings?.asrEngine ?? 'browser';
+  const mimoAsrEnabled = asrEngine === 'mimo';
+  const hasRecognizer = mimoAsrEnabled || Boolean(getSpeechRecognition());
 
   const scriptLines = useMemo(() => {
     if (currentSections.length) {
@@ -291,6 +298,16 @@ export function TeacherTrialOverlay({
       } catch {
         // Recognition may already be stopped.
       }
+      asrWantedRef.current = false;
+      if (chunkTimerRef.current) {
+        window.clearTimeout(chunkTimerRef.current);
+        chunkTimerRef.current = null;
+      }
+      try {
+        chunkRecorderRef.current?.stop();
+      } catch {
+        // Chunk recorder may already be stopped.
+      }
       streamRef.current?.getTracks().forEach((track) => track.stop());
     };
   }, []);
@@ -340,6 +357,114 @@ export function TeacherTrialOverlay({
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   });
+
+  const pumpAsrQueue = async () => {
+    if (asrBusyRef.current) return;
+    asrBusyRef.current = true;
+    try {
+      while (asrQueueRef.current.length) {
+        const blob = asrQueueRef.current.shift();
+        if (!blob || blob.size < 1200) continue;
+        try {
+          const result = await api.transcribeSpeech(blob);
+          const text = (result.text || '').trim();
+          if (!text) continue;
+          const previous = transcriptSegmentsRef.current;
+          const previousEnd = previous[previous.length - 1]?.endSeconds ?? 0;
+          const elapsedSeconds = Math.max(
+            0.2,
+            (performance.now() - startedAtRef.current) / 1000
+          );
+          liveTranscriptRef.current = liveTranscriptRef.current + text;
+          setLiveTranscript(liveTranscriptRef.current);
+          transcriptSegmentsRef.current = [
+            ...previous,
+            {
+              text,
+              startSeconds: Number(previousEnd.toFixed(2)),
+              endSeconds: Number(Math.max(previousEnd + 0.2, elapsedSeconds).toFixed(2))
+            }
+          ];
+          if (mountedRef.current) {
+            setNotice((current) => (current.startsWith('云端转写') ? '' : current));
+          }
+        } catch {
+          if (mountedRef.current) {
+            setNotice('云端转写暂时中断，录音会继续保存，结束后仍可手动校对。');
+          }
+        }
+      }
+    } finally {
+      asrBusyRef.current = false;
+    }
+  };
+
+  const queueAsrChunk = (blob: Blob) => {
+    asrQueueRef.current.push(blob);
+    void pumpAsrQueue();
+  };
+
+  const startMimoRecognition = (stream: MediaStream) => {
+    asrWantedRef.current = true;
+    const startChunk = () => {
+      if (!asrWantedRef.current || !mountedRef.current) return;
+      const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].find((type) =>
+        MediaRecorder.isTypeSupported(type)
+      );
+      let chunkRecorder: MediaRecorder;
+      try {
+        chunkRecorder = mime
+          ? new MediaRecorder(stream, { mimeType: mime })
+          : new MediaRecorder(stream);
+      } catch {
+        if (mountedRef.current) {
+          setNotice('云端转写未能启动，录音会继续保存。');
+        }
+        return;
+      }
+      const localChunks: Blob[] = [];
+      chunkRecorder.ondataavailable = (event) => {
+        if (event.data.size) localChunks.push(event.data);
+      };
+      chunkRecorder.onstop = () => {
+        if (chunkRecorderRef.current === chunkRecorder) chunkRecorderRef.current = null;
+        const blob = new Blob(localChunks, {
+          type: chunkRecorder.mimeType || 'audio/webm'
+        });
+        if (blob.size > 1200) queueAsrChunk(blob);
+        if (asrWantedRef.current && mountedRef.current) startChunk();
+      };
+      chunkRecorderRef.current = chunkRecorder;
+      chunkRecorder.start();
+      if (chunkTimerRef.current) window.clearTimeout(chunkTimerRef.current);
+      chunkTimerRef.current = window.setTimeout(() => {
+        chunkTimerRef.current = null;
+        if (chunkRecorder.state !== 'inactive') stopRecorderSafely(chunkRecorder);
+      }, 7000);
+    };
+    startChunk();
+  };
+
+  const stopMimoRecognition = () => {
+    asrWantedRef.current = false;
+    if (chunkTimerRef.current) {
+      window.clearTimeout(chunkTimerRef.current);
+      chunkTimerRef.current = null;
+    }
+    const recorder = chunkRecorderRef.current;
+    chunkRecorderRef.current = null;
+    if (recorder && recorder.state !== 'inactive') stopRecorderSafely(recorder);
+  };
+
+  const waitForAsrQueue = async (timeoutMs = 12000) => {
+    const started = performance.now();
+    while (
+      (asrBusyRef.current || asrQueueRef.current.length) &&
+      performance.now() - started < timeoutMs
+    ) {
+      await new Promise((resolve) => window.setTimeout(resolve, 200));
+    }
+  };
 
   const beginRecognition = () => {
     const SpeechRecognition = getSpeechRecognition();
@@ -496,6 +621,10 @@ export function TeacherTrialOverlay({
         } catch {
           // Recognition may already be stopped.
         }
+        if (mimoAsrEnabled) {
+          stopMimoRecognition();
+          await waitForAsrQueue(12000);
+        }
         stream.getTracks().forEach((track) => track.stop());
         streamRef.current = null;
         recorderRef.current = null;
@@ -574,8 +703,12 @@ export function TeacherTrialOverlay({
 
       recorder.start(1000);
       setPhase('recording');
-      recognitionWantedRef.current = true;
-      beginRecognition();
+      if (mimoAsrEnabled) {
+        startMimoRecognition(stream);
+      } else {
+        recognitionWantedRef.current = true;
+        beginRecognition();
+      }
     } catch (startError) {
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
@@ -754,7 +887,7 @@ export function TeacherTrialOverlay({
             </div>
           </div>
           <div className={`trial-live-transcript ${liveTranscript ? 'is-active' : ''}`}>
-            <span>{hasRecognizer ? '实时转写' : '转写'}</span>
+            <span>{mimoAsrEnabled ? '云端转写' : hasRecognizer ? '实时转写' : '转写'}</span>
             <p>
               {displayTranscript || '开始录音后，这里会同步显示你的讲述文字。'}
             </p>

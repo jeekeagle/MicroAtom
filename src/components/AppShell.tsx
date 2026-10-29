@@ -102,6 +102,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [query, setQuery] = useState('');
   const location = useLocation();
   const navigate = useNavigate();
+  const brand = data?.settings.brand;
+  const brandTitle = brand?.title?.trim() || '课序';
+  const brandSubtitle = brand?.subtitle?.trim() || 'COURSE SEQUENCE';
+  const brandVisible = brand?.visible !== false;
 
   useEffect(() => {
     setMobileOpen(false);
@@ -123,6 +127,10 @@ export function AppShell({ children }: { children: ReactNode }) {
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
   }, []);
+
+  useEffect(() => {
+    document.title = brandTitle;
+  }, [brandTitle]);
 
   const searchResults = useMemo<{
     nav: NavItem[];
@@ -155,17 +163,27 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div className="app-frame">
       {mobileOpen && <button className="sidebar-scrim" aria-label="关闭目录" onClick={() => setMobileOpen(false)} />}
       <aside className={`sidebar ${mobileOpen ? 'is-open' : ''}`}>
-        <div className="brand">
-          <Link to="/" className="brand-lockup" aria-label="课序首页">
-            <span className="brand-mark" aria-hidden="true">
-              <span />
-              <span />
-            </span>
-            <span className="brand-copy">
-              <strong>课序</strong>
-              <small>COURSE SEQUENCE</small>
-            </span>
-          </Link>
+        <div className={`brand ${brandVisible ? '' : 'is-bare'}`}>
+          {brandVisible && (
+            <Link to="/" className="brand-lockup" aria-label={`${brandTitle}首页`}>
+              {brand?.showMark !== false && (
+                <span className="brand-mark" aria-hidden="true">
+                  {brand?.logoDataUrl ? (
+                    <img src={brand.logoDataUrl} alt="" />
+                  ) : (
+                    <>
+                      <span />
+                      <span />
+                    </>
+                  )}
+                </span>
+              )}
+              <span className="brand-copy">
+                <strong>{brandTitle}</strong>
+                <small>{brandSubtitle}</small>
+              </span>
+            </Link>
+          )}
           <IconButton label="关闭目录" className="sidebar-close" onClick={() => setMobileOpen(false)}>
             <X size={18} />
           </IconButton>
@@ -232,8 +250,12 @@ export function AppShell({ children }: { children: ReactNode }) {
               <Menu size={20} />
             </IconButton>
             <div className="page-location">
-              <span>课序</span>
-              <ChevronRight size={13} />
+              {brandVisible && (
+                <>
+                  <span>{brandTitle}</span>
+                  <ChevronRight size={13} />
+                </>
+              )}
               <strong>{routeTitle(location.pathname)}</strong>
             </div>
           </div>

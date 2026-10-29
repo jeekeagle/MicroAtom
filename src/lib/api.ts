@@ -407,6 +407,49 @@ export const api = {
       method: 'DELETE'
     }),
 
+  setMimoApiKey: (apiKey: string) =>
+    request<{ ok: boolean; mimoApiKeyConfigured: boolean }>('/api/settings/mimo/api-key', {
+      method: 'POST',
+      body: JSON.stringify({ apiKey })
+    }),
+
+  clearMimoApiKey: () =>
+    request<{ ok: boolean; mimoApiKeyConfigured: boolean }>('/api/settings/mimo/api-key', {
+      method: 'DELETE'
+    }),
+
+  testMimoSpeech: () =>
+    request<{
+      ok: boolean;
+      latencyMs: number;
+      ttsMs: number;
+      asrMs: number;
+      bytes: number;
+      model: string;
+      asrModel: string;
+      transcript: string;
+      message: string;
+    }>('/api/settings/mimo/test', {
+      method: 'POST',
+      body: JSON.stringify({})
+    }),
+
+  transcribeSpeech: async (blob: Blob) => {
+    const response = await fetch('/api/speech/transcribe', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'X-Media-Type': blob.type || 'audio/webm'
+      },
+      body: blob
+    });
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+      throw new Error(payload?.error || `语音识别失败 (${response.status})`);
+    }
+    return response.json() as Promise<{ text: string; durationMs: number; model: string }>;
+  },
+
   resetSystem: () =>
     request<{ ok: boolean }>('/api/system/reset', {
       method: 'POST',

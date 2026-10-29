@@ -34,9 +34,12 @@ import {
 import { generateScript, generateSlides } from './generate';
 import {
   callModel,
+  clearMimoApiKey,
   clearModelApiKey,
+  hasMimoApiKey,
   hasModelApiKey,
   parseJsonLoose,
+  setMimoApiKey,
   setModelApiKey,
   testModelConnection
 } from './llm';
@@ -52,7 +55,8 @@ import {
   saveRecordingFile,
   saveTeacherVideoBuffer,
   saveTeacherVideoFile,
-  synthesizeNarration
+  synthesizeNarration,
+  voiceForEngine
 } from './media';
 import {
   MEDIA_KIND_LABEL,
@@ -68,6 +72,7 @@ import {
   runSkillWithModel
 } from './skills';
 import { mutateDb, readDb, resetDb, writeDb } from './store';
+import { testMimoSpeech, transcribeMimoAudio } from './speech';
 import { buildCourseTimeline } from './timeline';
 import {
   defaultWorkflowForMode,
@@ -204,7 +209,8 @@ const applySlideEngine = (
 
 const publicSettings = () => ({
   ...readDb().settings,
-  apiKeyConfigured: hasModelApiKey()
+  apiKeyConfigured: hasModelApiKey(),
+  mimoApiKeyConfigured: hasMimoApiKey()
 });
 
 const subjectHints = [
@@ -1105,7 +1111,10 @@ app.post('/api/projects/:id/actions', async (req, res) => {
         return;
       }
       const engine = resolveEngine(readDb().engines, 'audio', req.body?.engineId);
-      const voice = String(engine?.config.voice || settings.ttsVoice);
+      const voice = voiceForEngine(
+        settings.ttsEngine,
+        String(engine?.config.voice || settings.ttsVoice)
+      );
       const rate = Number(engine?.config.rate);
       const ttsSettings = {
         ...settings,
@@ -2026,7 +2035,21 @@ app.post('/api/skills/:id/run', async (req, res) => {
 app.patch('/api/settings', (req, res) => {
   const db = readDb();
   const { apiKey, clearApiKey, ...safeSettings } = (req.body || {}) as Record<string, unknown>;
-  db.settings = { ...db.settings, ...safeSettings };
+  const next = { ...safeSettings } as Record<string, unknown>;
+  if (next.brand && typeof next.brand === 'object') {
+    next.brand = { ...db.settings.brand, ...(next.brand as Record<string, unknown>) };
+  }
+  if (next.videoFrame && typeof next.videoFrame === 'object') {
+    next.videoFrame = {
+      ...db.settings.videoFrame,
+      ...(next.videoFrame as Record<string, unknown>)
+    };
+  }
+  const nextEngine =
+    (next.ttsEngine as typeof db.settings.ttsEngine | undefined) ?? db.settings.ttsEngine;
+  const nextVoice = typeof next.ttsVoice === 'string' ? next.ttsVoice : db.settings.ttsVoice;
+  next.ttsVoice = voiceForEngine(nextEngine, nextVoice);
+  db.settings = { ...db.settings, ...(next as Partial<typeof db.settings>) };
   if (typeof apiKey === 'string') {
     setModelApiKey(apiKey);
   } else if (clearApiKey) {
@@ -2057,6 +2080,41 @@ app.post('/api/settings/model/api-key', (req, res) => {
 app.delete('/api/settings/model/api-key', (_req, res) => {
   clearModelApiKey();
   res.json({ ok: true, apiKeyConfigured: false });
+});
+
+app.post('/api/settings/mimo/api-key', (req, res) => {
+  const key = String(req.body?.apiKey || '').trim();
+  if (!key) {
+    res.status(400).json({ error: 'MiMo API Key 不能为空' });
+    return;
+  }
+  setMimoApiKey(key);
+  res.json({ ok: true, mimoApiKeyConfigured: true });
+});
+
+app.delete('/api/settings/mimo/api-key', (_req, res) => {
+  clearMimoApiKey();
+  res.json({ ok: true, mimoApiKeyConfigured: false });
+});
+
+app.post('/api/settings/mimo/test', async (_req, res) => {
+  res.json(await testMimoSpeech());
+});
+
+app.post('/api/speech/transcribe', rawMediaUpload, async (req, res) => {
+  const buffer = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+  if (!buffer.length) {
+    res.status(400).json({ error: '没有收到可识别的录音' });
+    return;
+  }
+  try {
+    const mime = String(req.headers['x-media-type'] || 'audio/webm');
+    res.json(await transcribeMimoAudio(buffer, mime));
+  } catch (error) {
+    res.status(502).json({
+      error: error instanceof Error ? error.message : 'MiMo 语音识别失败'
+    });
+  }
 });
 
 app.post('/api/system/reset', (_req, res) => {

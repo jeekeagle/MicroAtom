@@ -12,7 +12,8 @@ export type MediaKind =
 export type MediaTriggerPlacement = 'below' | 'side' | 'focus';
 export type ProjectStatus = 'draft' | 'producing' | 'review' | 'done';
 export type JobStatus = 'idle' | 'queued' | 'running' | 'done' | 'error';
-export type TtsEngine = 'edge' | 'sapi' | 'none';
+export type TtsEngine = 'edge' | 'sapi' | 'mimo' | 'none';
+export type AsrEngine = 'browser' | 'mimo' | 'none';
 export type ModelProtocol = 'chat' | 'responses';
 export type GenerationEngine = 'model' | 'local-fallback' | 'media' | 'system';
 export type AlignmentMethod = 'segment' | 'text' | 'estimated' | 'none';
@@ -149,7 +150,7 @@ export interface RecordingAsset {
   fileName?: string;
   sizeBytes?: number;
   fingerprint?: string;
-  source?: 'edge' | 'sapi' | 'browser' | 'file';
+  source?: 'edge' | 'sapi' | 'mimo' | 'browser' | 'file';
   alignmentMethod?: AlignmentMethod;
   alignmentConfidence?: number;
   transcriptSegments?: TranscriptSegment[];
@@ -348,6 +349,14 @@ export interface VideoFrameConfig {
   defaultSchemeId: string;
 }
 
+export interface BrandConfig {
+  visible: boolean;
+  showMark: boolean;
+  title: string;
+  subtitle: string;
+  logoDataUrl?: string;
+}
+
 export interface RuntimeSettings {
   reasoningModel: string;
   visualModel: string;
@@ -366,8 +375,11 @@ export interface RuntimeSettings {
   ttsEngine: TtsEngine;
   ttsVoice: string;
   ttsRate: number;
+  asrEngine: AsrEngine;
+  mimoStylePrompt: string;
   recordTeacherVideo: boolean;
   videoFrame: VideoFrameConfig;
+  brand: BrandConfig;
 }
 
 export interface ActivityEvent {
@@ -402,6 +414,8 @@ export interface Capabilities {
   tts: boolean;
   ttsEngine: TtsEngine;
   ttsVoice: string;
+  asrEngine: AsrEngine;
+  mimoConfigured: boolean;
   ffmpeg: boolean;
   chrome: boolean;
   browserAsr: boolean;

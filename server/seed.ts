@@ -481,7 +481,7 @@ export const seedSettings: RuntimeSettings = {
   reasoningModel: 'deepseek-v4.1-flash',
   visualModel: '本地分镜引擎',
   ttsModel: 'Edge 神经语音',
-  asrModel: '浏览智听 / 未配置',
+  asrModel: 'MiMo 语音识别',
   apiBase: 'http://127.0.0.1:8787/api',
   modelBaseUrl: 'http://127.0.0.1:15721/v1',
   modelName: 'deepseek-v4.1-flash',
@@ -494,12 +494,20 @@ export const seedSettings: RuntimeSettings = {
   ttsEngine: 'edge',
   ttsVoice: 'zh-CN-XiaoxiaoNeural',
   ttsRate: 0,
+  asrEngine: 'browser',
+  mimoStylePrompt: '温暖、清晰、语速适中的课堂讲解语气',
   recordTeacherVideo: false,
   videoFrame: {
     enabled: true,
     schemes: seedVideoFrameSchemes,
     activeSchemeId: 'frame-classic',
     defaultSchemeId: 'frame-classic'
+  },
+  brand: {
+    visible: true,
+    showMark: true,
+    title: '课序',
+    subtitle: 'COURSE SEQUENCE'
   }
 };
 

@@ -10,8 +10,9 @@ import type {
   RuntimeSettings,
   ScriptSection
 } from '../src/types';
-import { describeModelConfig } from './llm';
+import { describeModelConfig, hasMimoApiKey } from './llm';
 import { mediaRoot, serverScriptsRoot } from './paths';
+import { MIMO_VOICES, synthesizeMimoAudio } from './speech';
 import { buildCourseTimeline } from './timeline';
 
 export { mediaRoot } from './paths';
@@ -43,6 +44,20 @@ const edgeVoices: Record<string, string> = {
 };
 
 export const ttsVoiceOptions = Object.entries(edgeVoices).map(([id, label]) => ({ id, label }));
+export const mimoVoiceOptions = MIMO_VOICES.map((voice) => ({ id: voice.id, label: voice.label }));
+
+const edgeVoiceIds = new Set<string>(ttsVoiceOptions.map((voice) => voice.id));
+const mimoVoiceIds = new Set<string>(mimoVoiceOptions.map((voice) => voice.id));
+
+/** Keeps a stored voice compatible with the engine that is about to speak. */
+export function voiceForEngine(engine: RuntimeSettings['ttsEngine'], requested?: string) {
+  const voice = (requested || '').trim();
+  if (engine === 'mimo') return mimoVoiceIds.has(voice) ? voice : 'mimo_default';
+  if (engine === 'edge' || engine === 'sapi') {
+    return edgeVoiceIds.has(voice) ? voice : 'zh-CN-XiaoxiaoNeural';
+  }
+  return voice;
+}
 
 const exists = (candidate: string) => {
   if (!candidate.includes(path.sep) && !candidate.includes('/') && !candidate.endsWith('.exe')) {
@@ -56,9 +71,11 @@ export function detectCapabilities(settings: RuntimeSettings): Capabilities {
   const ffmpeg = ffmpegCandidates.find((candidate) => exists(candidate) && candidate !== 'ffmpeg') ?? ffmpegCandidates[0];
   const model = describeModelConfig(settings);
   return {
-    tts: true,
-    ttsEngine: 'edge',
-    ttsVoice: 'zh-CN-XiaoxiaoNeural',
+    tts: settings.ttsEngine === 'mimo' ? hasMimoApiKey() : settings.ttsEngine !== 'none',
+    ttsEngine: settings.ttsEngine,
+    ttsVoice: settings.ttsVoice,
+    asrEngine: settings.asrEngine,
+    mimoConfigured: hasMimoApiKey(),
     ffmpeg: Boolean(ffmpeg),
     chrome: Boolean(chrome),
     browserAsr: true,
@@ -172,7 +189,7 @@ async function synthesizeWithEdge(
     '-m',
     'edge_tts',
     '--voice',
-    settings.ttsVoice || 'zh-CN-XiaoxiaoNeural',
+    voiceForEngine('edge', settings.ttsVoice),
     `--rate=${rateArg}`,
     '--text',
     section.narration,
@@ -212,6 +229,21 @@ async function synthesizeWithSapi(
   return output;
 }
 
+async function synthesizeWithMimo(
+  projectDir: string,
+  section: ScriptSection,
+  settings: RuntimeSettings,
+  index: number
+) {
+  const output = path.join(projectDir, 'tts', `section-${String(index + 1).padStart(2, '0')}.mp3`);
+  await synthesizeMimoAudio(section.narration, output, {
+    voice: voiceForEngine('mimo', settings.ttsVoice),
+    style: settings.mimoStylePrompt,
+    format: 'mp3'
+  });
+  return output;
+}
+
 export interface SynthesisResult {
   asset: RecordingAsset;
   sectionFiles: Array<{ sectionId: string; file: string; durationSeconds: number }>;
@@ -228,17 +260,44 @@ export async function synthesizeNarration(
 
   const sections = project.script.sections;
   const results: Array<{ sectionId: string; file: string; durationSeconds: number }> = [];
-  const engine = { source: 'edge' as 'edge' | 'sapi' };
+  const engine = {
+    source: (settings.ttsEngine === 'sapi'
+      ? 'sapi'
+      : settings.ttsEngine === 'mimo'
+        ? 'mimo'
+        : 'edge') as 'edge' | 'sapi' | 'mimo'
+  };
   let engineError = '';
 
   const worker = async (section: ScriptSection, index: number) => {
-    let file: string;
+    let file = '';
     try {
-      file = await synthesizeWithEdge(projectDir, section, settings, index);
+      if (settings.ttsEngine === 'none') {
+        throw new Error('旁白语音引擎已关闭');
+      }
+      if (settings.ttsEngine === 'sapi') {
+        file = await synthesizeWithSapi(projectDir, sections, index);
+      } else if (settings.ttsEngine === 'mimo') {
+        file = await synthesizeWithMimo(projectDir, section, settings, index);
+      } else {
+        file = await synthesizeWithEdge(projectDir, section, settings, index);
+      }
     } catch (error) {
-      engineError = error instanceof Error ? error.message : '边缘语音服务不可用';
-      engine.source = 'sapi';
-      file = await synthesizeWithSapi(projectDir, sections, index);
+      const primaryError = error instanceof Error ? error.message : '语音服务不可用';
+      if (settings.allowLocalFallback === false) throw error;
+      engineError = primaryError;
+      if (settings.ttsEngine !== 'edge') {
+        try {
+          file = await synthesizeWithEdge(projectDir, section, settings, index);
+          engine.source = 'edge';
+        } catch {
+          file = await synthesizeWithSapi(projectDir, sections, index);
+          engine.source = 'sapi';
+        }
+      } else {
+        file = await synthesizeWithSapi(projectDir, sections, index);
+        engine.source = 'sapi';
+      }
     }
     const duration = await probeDuration(file, section.durationSeconds);
     return { sectionId: section.id, file, durationSeconds: duration };
@@ -299,7 +358,8 @@ export async function synthesizeNarration(
         sections: sections.map((section) => section.narration),
         voice: settings.ttsVoice,
         rate: settings.ttsRate,
-        source: engine.source
+        source: engine.source,
+        style: settings.mimoStylePrompt
       })
     )
     .digest('hex')
@@ -308,7 +368,10 @@ export async function synthesizeNarration(
   const asset: RecordingAsset = {
     id: `tts-${fingerprint}`,
     kind: 'tts',
-    name: `${ttsVoiceOptions.find((voice) => voice.id === settings.ttsVoice)?.label ?? 'AI 旁白'}`,
+    name: `${
+      [...ttsVoiceOptions, ...mimoVoiceOptions].find((voice) => voice.id === settings.ttsVoice)?.label ??
+      'AI 旁白'
+    }`,
     durationSeconds: Number(totalDuration.toFixed(2)),
     status: 'done',
     alignment: 100,
@@ -324,6 +387,8 @@ export async function synthesizeNarration(
 
   if (engineError && asset.source === 'sapi') {
     asset.name = '本机语音 · 慧慧';
+  } else if (engineError && asset.source === 'edge') {
+    asset.name = 'Edge 神经语音 · 已回退';
   }
 
   return { asset, sectionFiles: activeResults };

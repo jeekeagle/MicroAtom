@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Check,
@@ -7,7 +7,11 @@ import {
   CircleDashed,
   Cpu,
   Database,
+  Eye,
+  EyeOff,
   Headphones,
+  ImagePlus,
+  KeyRound,
   LoaderCircle,
   Mic2,
   RefreshCw,
@@ -15,6 +19,8 @@ import {
   Save,
   ShieldCheck,
   SlidersHorizontal,
+  Sparkles,
+  Trash2,
   Volume2,
   Wrench
 } from 'lucide-react';
@@ -24,7 +30,7 @@ import type { Capabilities, RuntimeSettings } from '../types';
 import { Button, SectionLabel } from '../components/ui';
 import { VideoFrameSettings } from '../components/VideoFrameSettings';
 
-const voiceOptions = [
+const edgeVoiceOptions = [
   ['zh-CN-XiaoxiaoNeural', '晓晓 · 温暖女声'],
   ['zh-CN-XiaoyiNeural', '晓伊 · 清亮女声'],
   ['zh-CN-YunxiNeural', '云希 · 沉稳男声'],
@@ -32,7 +38,20 @@ const voiceOptions = [
   ['zh-CN-YunyangNeural', '云扬 · 新闻男声']
 ];
 
-const cloneSettings = (settings: RuntimeSettings): RuntimeSettings => ({ ...settings });
+const mimoVoiceOptions = [
+  ['mimo_default', 'MiMo 默认 · 自然课堂'],
+  ['冰糖', '冰糖 · 清甜女声'],
+  ['茉莉', '茉莉 · 温柔女声'],
+  ['苏打', '苏打 · 清爽青年'],
+  ['白桦', '白桦 · 沉稳男声'],
+  ['Mia', 'Mia · 英文女声'],
+  ['Chloe', 'Chloe · 英文女声'],
+  ['Milo', 'Milo · 英文男声'],
+  ['Dean', 'Dean · 英文男声']
+];
+
+const cloneSettings = (settings: RuntimeSettings): RuntimeSettings =>
+  JSON.parse(JSON.stringify(settings)) as RuntimeSettings;
 
 type SettingsTab = 'model' | 'voice' | 'runtime' | 'frame' | 'system';
 
@@ -54,10 +73,23 @@ export function SettingsPage() {
   const [checking, setChecking] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [tab, setTab] = useState<SettingsTab>('model');
+  const [mimoKey, setMimoKey] = useState('');
+  const [showMimoKey, setShowMimoKey] = useState(false);
+  const [mimoConfigured, setMimoConfigured] = useState(
+    Boolean(data?.capabilities.mimoConfigured)
+  );
+  const [mimoBusy, setMimoBusy] = useState<'save' | 'clear' | 'test' | ''>('');
+  const [mimoResult, setMimoResult] = useState('');
+  const [logoError, setLogoError] = useState('');
+  const logoInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (data) setForm(cloneSettings(data.settings));
   }, [data?.settings]);
+
+  useEffect(() => {
+    if (data) setMimoConfigured(Boolean(data.capabilities.mimoConfigured));
+  }, [data?.capabilities.mimoConfigured]);
 
   const changed = useMemo(() => {
     if (!data || !form) return false;
@@ -111,6 +143,100 @@ export function SettingsPage() {
     } finally {
       setResetting(false);
     }
+  };
+
+  const saveMimoKey = async () => {
+    if (!mimoKey.trim()) {
+      showToast('请先填入 MiMo API Key', 'error');
+      return;
+    }
+    setMimoBusy('save');
+    try {
+      await api.setMimoApiKey(mimoKey.trim());
+      setMimoKey('');
+      setMimoConfigured(true);
+      setMimoResult('');
+      await refresh();
+      showToast('MiMo API Key 已保存到本机');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'MiMo Key 保存失败', 'error');
+    } finally {
+      setMimoBusy('');
+    }
+  };
+
+  const clearMimoKey = async () => {
+    setMimoBusy('clear');
+    try {
+      await api.clearMimoApiKey();
+      setMimoConfigured(false);
+      setMimoResult('');
+      await refresh();
+      showToast('MiMo API Key 已清除', 'info');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'MiMo Key 清除失败', 'error');
+    } finally {
+      setMimoBusy('');
+    }
+  };
+
+  const testMimo = async () => {
+    setMimoBusy('test');
+    setMimoResult('');
+    try {
+      const result = await api.testMimoSpeech();
+      setMimoResult(
+        result.ok
+          ? `连接正常 · TTS ${result.ttsMs}ms · ASR ${result.asrMs}ms · 识别为「${result.transcript || '（空）'}」`
+          : result.message
+      );
+      showToast(result.ok ? 'MiMo 语音链路正常' : result.message, result.ok ? 'info' : 'error');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'MiMo 测试失败';
+      setMimoResult(message);
+      showToast(message, 'error');
+    } finally {
+      setMimoBusy('');
+    }
+  };
+
+  const setBrand = (patch: Partial<RuntimeSettings['brand']>) => {
+    setForm((current) =>
+      current ? { ...current, brand: { ...current.brand, ...patch } } : current
+    );
+  };
+
+  const pickLogo = (file: File | undefined) => {
+    setLogoError('');
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setLogoError('请选择 PNG、JPG 或 SVG 图片');
+      return;
+    }
+    if (file.size > 1024 * 1024) {
+      setLogoError('图片需小于 1MB，建议先压缩');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : '';
+      if (result) setBrand({ logoDataUrl: result });
+    };
+    reader.onerror = () => setLogoError('图片读取失败，请重试');
+    reader.readAsDataURL(file);
+  };
+
+  const changeTtsEngine = (engine: RuntimeSettings['ttsEngine']) => {
+    setForm((current) => {
+      if (!current) return current;
+      const pool = engine === 'mimo' ? mimoVoiceOptions : edgeVoiceOptions;
+      const voice = pool.some(([id]) => id === current.ttsVoice)
+        ? current.ttsVoice
+        : engine === 'mimo'
+          ? 'mimo_default'
+          : 'zh-CN-XiaoxiaoNeural';
+      return { ...current, ttsEngine: engine, ttsVoice: voice };
+    });
   };
 
   return (
@@ -222,6 +348,7 @@ export function SettingsPage() {
           )}
 
           {tab === 'voice' && (
+          <>
           <section className="settings-section">
             <div className="settings-section-head">
               <span className="settings-section-icon teal">
@@ -241,10 +368,13 @@ export function SettingsPage() {
                 <span>TTS 引擎</span>
                 <select
                   value={form.ttsEngine}
-                  onChange={(event) => set('ttsEngine', event.target.value as RuntimeSettings['ttsEngine'])}
+                  onChange={(event) =>
+                    changeTtsEngine(event.target.value as RuntimeSettings['ttsEngine'])
+                  }
                 >
                   <option value="edge">Edge 神经语音</option>
                   <option value="sapi">Windows 本机语音</option>
+                  <option value="mimo">MiMo 云端语音</option>
                   <option value="none">关闭</option>
                 </select>
                 <small>Edge 不可用时，媒体流程会尝试回退本机语音。</small>
@@ -255,29 +385,65 @@ export function SettingsPage() {
                   value={form.ttsVoice}
                   onChange={(event) => set('ttsVoice', event.target.value)}
                 >
-                  {voiceOptions.map(([value, label]) => (
-                    <option value={value} key={value}>
-                      {label}
-                    </option>
-                  ))}
+                  {(form.ttsEngine === 'mimo' ? mimoVoiceOptions : edgeVoiceOptions).map(
+                    ([value, label]) => (
+                      <option value={value} key={value}>
+                        {label}
+                      </option>
+                    )
+                  )}
                 </select>
+                <small>
+                  {form.ttsEngine === 'mimo'
+                    ? '音色由 MiMo 云端生成，支持中英文。'
+                    : '本机或 Edge 神经音色。'}
+                </small>
               </label>
               <label className="field">
-                <span>旁白模型</span>
+                <span>{form.ttsEngine === 'mimo' ? 'TTS 模型' : '旁白模型'}</span>
                 <input
                   value={form.ttsModel}
                   onChange={(event) => set('ttsModel', event.target.value)}
                 />
               </label>
             </div>
-            <div className="settings-form-grid">
+            {form.ttsEngine === 'mimo' && (
+              <div className="settings-form-grid">
+                <label className="field">
+                  <span>MiMo 风格提示词</span>
+                  <textarea
+                    rows={2}
+                    value={form.mimoStylePrompt}
+                    onChange={(event) => set('mimoStylePrompt', event.target.value)}
+                    placeholder="例如：温暖、清晰、语速适中的课堂讲解语气"
+                  />
+                  <small>作为 TTS 的 system 语气描述，不替代讲稿正文。</small>
+                </label>
+              </div>
+            )}
+            <div className="settings-form-grid three">
               <label className="field">
-                <span>转写 / ASR</span>
+                <span>转写 / ASR 引擎</span>
+                <select
+                  value={form.asrEngine}
+                  onChange={(event) =>
+                    set('asrEngine', event.target.value as RuntimeSettings['asrEngine'])
+                  }
+                >
+                  <option value="browser">浏览器实时转写</option>
+                  <option value="mimo">MiMo 语音识别</option>
+                  <option value="none">关闭转写</option>
+                </select>
+                <small>
+                  MiMo 模式按分片上传，适合 Edge 之外的浏览器或需要更高准确率的场景。
+                </small>
+              </label>
+              <label className="field">
+                <span>ASR 模型</span>
                 <input
                   value={form.asrModel}
                   onChange={(event) => set('asrModel', event.target.value)}
                 />
-                <small>浏览器实时转写或外部 ASR 服务。</small>
               </label>
               <div className="range-field">
                 <div>
@@ -300,6 +466,85 @@ export function SettingsPage() {
               </div>
             </div>
           </section>
+          <section className="settings-section">
+            <div className="settings-section-head">
+              <span className="settings-section-icon teal">
+                <Sparkles size={18} />
+              </span>
+              <div>
+                <h2>MiMo 云端语音</h2>
+                <p>TTS 与 ASR 共用一把 API Key，保存在本机工作区。</p>
+              </div>
+              <span
+                className={`settings-section-state ${mimoConfigured ? 'is-online' : ''}`}
+              >
+                <span />
+                {mimoConfigured ? '已配置' : '未配置'}
+              </span>
+            </div>
+            <div className="settings-form-grid three">
+              <label className="field">
+                <span>API Key</span>
+                <div className="secret-input">
+                  <input
+                    type={showMimoKey ? 'text' : 'password'}
+                    value={mimoKey}
+                    autoComplete="off"
+                    placeholder={mimoConfigured ? '已保存，如需更换请重新填写' : 'sk-...'}
+                    onChange={(event) => setMimoKey(event.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="icon-button"
+                    aria-label={showMimoKey ? '隐藏密钥' : '显示密钥'}
+                    title={showMimoKey ? '隐藏密钥' : '显示密钥'}
+                    onClick={() => setShowMimoKey((value) => !value)}
+                  >
+                    {showMimoKey ? <EyeOff size={15} /> : <Eye size={15} />}
+                  </button>
+                </div>
+                <small>密钥只写入本机 data/secrets.json，不会回传浏览器或进入课程数据。</small>
+              </label>
+              <div className="field">
+                <span>连接与校验</span>
+                <div className="inline-actions">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={<KeyRound size={14} />}
+                    loading={mimoBusy === 'save'}
+                    onClick={() => void saveMimoKey()}
+                  >
+                    保存 Key
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={<Sparkles size={14} />}
+                    loading={mimoBusy === 'test'}
+                    onClick={() => void testMimo()}
+                  >
+                    测试链路
+                  </Button>
+                  {mimoConfigured && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon={<Trash2 size={14} />}
+                      loading={mimoBusy === 'clear'}
+                      onClick={() => void clearMimoKey()}
+                    >
+                      清除
+                    </Button>
+                  )}
+                </div>
+                <small className={mimoResult && !mimoResult.includes('正常') ? 'is-error' : ''}>
+                  {mimoResult || '测试会合成一句示例语音，再用 ASR 回读校验。'}
+                </small>
+              </div>
+            </div>
+          </section>
+          </>
           )}
 
           {tab === 'runtime' && (
@@ -459,6 +704,123 @@ export function SettingsPage() {
           )}
 
           {tab === 'system' && (
+          <section className="settings-section">
+            <div className="settings-section-head">
+              <span className="settings-section-icon ink">
+                <ImagePlus size={18} />
+              </span>
+              <div>
+                <h2>品牌标识</h2>
+                <p>控制侧栏、顶栏与浏览器标题的品牌展示，也可以换成自己的 Logo。</p>
+              </div>
+              <span
+                className={`settings-section-state ${form.brand.visible ? 'is-online' : ''}`}
+              >
+                <span />
+                {form.brand.visible ? '展示中' : '已隐藏'}
+              </span>
+            </div>
+            <div className="settings-inline-options">
+              <label className="toggle-row">
+                <input
+                  type="checkbox"
+                  checked={form.brand.visible}
+                  onChange={(event) => setBrand({ visible: event.target.checked })}
+                />
+                <span className="toggle-ui" />
+                <span>
+                  <strong>显示品牌</strong>
+                  <small>关闭后侧栏品牌区与顶栏品牌名一起隐藏</small>
+                </span>
+              </label>
+              <label className="toggle-row">
+                <input
+                  type="checkbox"
+                  checked={form.brand.showMark}
+                  onChange={(event) => setBrand({ showMark: event.target.checked })}
+                />
+                <span className="toggle-ui" />
+                <span>
+                  <strong>显示标识图形</strong>
+                  <small>没有上传图片时显示默认双柱标</small>
+                </span>
+              </label>
+            </div>
+            <div className="settings-form-grid">
+              <label className="field">
+                <span>主标题</span>
+                <input
+                  value={form.brand.title}
+                  maxLength={24}
+                  onChange={(event) => setBrand({ title: event.target.value })}
+                  placeholder="课序"
+                />
+                <small>显示在侧栏与顶栏，留空时使用“课序”。</small>
+              </label>
+              <label className="field">
+                <span>副标题</span>
+                <input
+                  value={form.brand.subtitle}
+                  maxLength={40}
+                  onChange={(event) => setBrand({ subtitle: event.target.value })}
+                  placeholder="COURSE SEQUENCE"
+                />
+                <small>侧栏品牌下方的小字，留空时使用默认英文名。</small>
+              </label>
+            </div>
+            <div className="brand-logo-editor">
+              <div className="brand-logo-preview" data-empty={!form.brand.logoDataUrl}>
+                {!form.brand.showMark ? (
+                  <small>标识图形已隐藏</small>
+                ) : form.brand.logoDataUrl ? (
+                  <img src={form.brand.logoDataUrl} alt="品牌 Logo 预览" />
+                ) : (
+                  <span className="brand-mark" aria-hidden="true">
+                    <span />
+                    <span />
+                  </span>
+                )}
+              </div>
+              <div className="brand-logo-actions">
+                <strong>品牌 Logo</strong>
+                <small>支持 PNG、JPG、SVG 或 WebP，建议 1:1，大小不超过 1MB。</small>
+                <div className="inline-actions">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={<ImagePlus size={14} />}
+                    onClick={() => logoInputRef.current?.click()}
+                  >
+                    上传图片
+                  </Button>
+                  {form.brand.logoDataUrl && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon={<Trash2 size={14} />}
+                      onClick={() => setBrand({ logoDataUrl: '' })}
+                    >
+                      移除
+                    </Button>
+                  )}
+                </div>
+                {logoError && <small className="is-error">{logoError}</small>}
+                <input
+                  ref={logoInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                  hidden
+                  onChange={(event) => {
+                    pickLogo(event.target.files?.[0]);
+                    event.target.value = '';
+                  }}
+                />
+              </div>
+            </div>
+          </section>
+          )}
+
+          {tab === 'system' && (
           <section className="settings-section settings-danger">
             <div className="settings-section-head">
               <span className="settings-section-icon danger">
@@ -497,7 +859,15 @@ export function SettingsPage() {
               </div>
               <div>
                 <span>TTS</span>
-                <strong>{form.ttsEngine === 'edge' ? 'Edge 神经语音' : form.ttsEngine === 'sapi' ? 'Windows 本机' : '关闭'}</strong>
+                <strong>
+                  {form.ttsEngine === 'edge'
+                    ? 'Edge 神经语音'
+                    : form.ttsEngine === 'sapi'
+                      ? 'Windows 本机'
+                      : form.ttsEngine === 'mimo'
+                        ? 'MiMo 云端语音'
+                        : '关闭'}
+                </strong>
               </div>
               <div>
                 <span>工作目录</span>
