@@ -75,6 +75,26 @@ export const DEFAULT_ENGINES: ProductionEngine[] = [
     true
   ),
   engine(
+    'engine-slides-white',
+    '白底课件引擎',
+    'slides',
+    'structure',
+    '按白底课堂课件规范生成 1920×1080 HTML 课件页：顶部课程名、左上结论式标题、正文不小于 30px。',
+    'agent-slides',
+    ['slide-outline', 'slide-whiteprint', 'visual-audit'],
+    { mode: 'html-white', layoutBias: 'white', visualDensity: 'rich', whiteCanvas: true }
+  ),
+  engine(
+    'engine-slides-html',
+    'HTML 课件引擎',
+    'slides',
+    'structure',
+    '在白底课件规范上叠加可交互层：分层要点、课堂提问与点击揭示，适合讲台演示与课后自学。',
+    'agent-slides',
+    ['slide-outline', 'slide-interactive', 'visual-audit'],
+    { mode: 'html-interactive', layoutBias: 'html', visualDensity: 'rich', whiteCanvas: true }
+  ),
+  engine(
     'engine-slides-visual',
     '图示课件引擎',
     'slides',

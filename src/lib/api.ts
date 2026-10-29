@@ -463,6 +463,17 @@ export const api = {
       body: JSON.stringify({})
     }),
 
+  generateComposerCards: (projectId: string, payload: { mediaKind: MediaKind; count?: number }) =>
+    request<{
+      project: CourseProject;
+      source: 'model' | 'local-fallback';
+      warning: string;
+      count: number;
+    }>(`/api/projects/${projectId}/composer/cards`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+
   createMount: (
     projectId: string,
     payload: {

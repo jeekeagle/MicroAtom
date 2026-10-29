@@ -32,7 +32,11 @@ const kindLabel: Record<MediaKind, string> = {
   'concept-card': '概念卡',
   infographic: '一图读懂',
   timeline: '课程时间线',
-  quiz: '问答题'
+  quiz: '问答题',
+  flashcard: '术语速记卡',
+  checklist: '掌握自检卡',
+  counterexample: '反例辨析卡',
+  challenge: '迁移挑战卡'
 };
 
 const kindTone: Record<MediaKind, string> = {
@@ -41,7 +45,11 @@ const kindTone: Record<MediaKind, string> = {
   'concept-card': 'gold',
   infographic: 'ink',
   timeline: 'brick',
-  quiz: 'teal'
+  quiz: 'teal',
+  flashcard: 'ink',
+  checklist: 'teal',
+  counterexample: 'brick',
+  challenge: 'gold'
 };
 
 const clamp = (value: number, min: number, max: number) =>
@@ -65,6 +73,9 @@ export function CourseComposerPage() {
   const [currentTime, setCurrentTime] = useState(0);
   const [artifacts, setArtifacts] = useState<MediaArtifact[]>([]);
   const [newKind, setNewKind] = useState<MediaKind>('concept-card');
+  const [cardKind, setCardKind] = useState<MediaKind>('quiz');
+  const [cardCount, setCardCount] = useState(3);
+  const [generatingCards, setGeneratingCards] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const laneRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{ id: string; offset: number } | null>(null);
@@ -154,6 +165,23 @@ export function CourseComposerPage() {
       setSelectedMountId(next.mounts?.[next.mounts.length - 1]?.id ?? '');
     } catch (error) {
       window.alert(error instanceof Error ? error.message : '挂载失败');
+    }
+  };
+
+  const generateCards = async () => {
+    setGeneratingCards(true);
+    try {
+      const result = await api.generateComposerCards(projectId, {
+        mediaKind: cardKind,
+        count: cardCount
+      });
+      setProject(result.project);
+      if (result.warning) window.alert(result.warning);
+      else window.alert(`已生成 ${result.count} 张${kindLabel[cardKind]}，并挂载到时间轴。`);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : '卡片生成失败');
+    } finally {
+      setGeneratingCards(false);
     }
   };
 
@@ -514,6 +542,47 @@ export function CourseComposerPage() {
               {!anchors.length && (
                 <p className="composer-empty">点击右上角“智能体定位概念”，逐字稿中的关键概念会出现在这里。</p>
               )}
+            </div>
+          </section>
+
+          <section className="composer-card">
+            <div className="composer-card-head">
+              <strong>生成互动卡片</strong>
+              <small>洞察智能体</small>
+            </div>
+            <p className="composer-empty">
+              洞察智能体会通读逐字稿，按卡片类型写内容并直接挂到时间轴：随堂快问、术语速记、掌握自检、反例辨析与迁移挑战。
+            </p>
+            <div className="composer-add">
+              <select
+                value={cardKind}
+                onChange={(event) => setCardKind(event.target.value as MediaKind)}
+              >
+                <option value="quiz">随堂快问</option>
+                <option value="flashcard">术语速记卡</option>
+                <option value="checklist">掌握自检卡</option>
+                <option value="counterexample">反例辨析卡</option>
+                <option value="challenge">迁移挑战卡</option>
+              </select>
+              <select
+                value={cardCount}
+                onChange={(event) => setCardCount(Number(event.target.value) || 3)}
+              >
+                {[1, 2, 3, 4, 5].map((count) => (
+                  <option value={count} key={count}>
+                    {count} 张
+                  </option>
+                ))}
+              </select>
+              <Button
+                variant="primary"
+                size="sm"
+                icon={<Sparkles size={14} />}
+                loading={generatingCards}
+                onClick={() => void generateCards()}
+              >
+                生成并挂载
+              </Button>
             </div>
           </section>
 

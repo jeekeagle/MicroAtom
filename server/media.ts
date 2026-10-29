@@ -636,7 +636,8 @@ function slideBody(slide: CourseSlide) {
     <div class="points">${points}</div>${supportingBlock}${ask}</div>`;
 }
 
-﻿export function buildSlideHtml(slide: CourseSlide) {
+﻿export function buildSlideHtml(slide: CourseSlide, project?: CourseProject) {
+  if (slide.html && slide.html.includes('<html')) return slide.html;
   const accent = accentColors[slide.accent];
   const accentSoft = slideAccentSofts[slide.accent];
   const dark = slide.layout === 'cover';
@@ -721,7 +722,7 @@ async function renderSlideImages(project: CourseProject, projectDir: string) {
   for (const [index, slide] of project.slides.entries()) {
     const htmlPath = path.join(slideDir, `slide-${String(index + 1).padStart(2, '0')}.html`);
     const pngPath = path.join(slideDir, `slide-${String(index + 1).padStart(2, '0')}.png`);
-    fs.writeFileSync(htmlPath, buildSlideHtml(slide), 'utf8');
+    fs.writeFileSync(htmlPath, buildSlideHtml(slide, project), 'utf8');
     const userDataDir = path.join(slideDir, `.chrome-${index}`);
     try {
       await runProcess(chrome, [

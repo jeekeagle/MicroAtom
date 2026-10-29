@@ -745,3 +745,135 @@ export async function runAgentPipeline(
     }
   };
 }
+
+const WHITE_SLIDE_RULES = `画布与排版规范（必须严格遵守）：
+1. 画布 1920×1080，纯白背景 #ffffff，不使用深色背景、渐变、投影或装饰插画。
+2. 顶部一行：左侧写课程名（22-24px，深灰 #16202b），右侧写「学段 · 学科」（22-24px，浅灰 #939ea8）。
+3. 标题写在左上角：56-68px，结论句而不是名词短语；下方紧跟一句副标题或主结论（30-34px，灰色 #64707c）。
+4. 正文要点 30-36px、行高 1.6，最多 4 条；补充说明 26-28px 浅灰；页面留白充足，模块间距不小于 56px。
+5. 需要图示时用简洁的内联 SVG：线条 2-4px，节点用浅色填充 + 一条彩色竖条，不要渐变与阴影。
+6. 页脚：左侧页码（两位数）+ 一条细线 + 段落名。
+7. 每页只讲一件事；文字不得溢出画布，不得出现半截内容。
+8. 输出必须是完整、自包含的 HTML 文档：<!doctype html> 开头，含 <meta charset="utf-8"> 与内联 <style>，不要引用外部资源。
+9. 尺寸必须自适应：画布用 width:100%;height:100%，所有字号与间距用 vw 表示（1920px 视口下 1vw = 19.2px，例如 64px 的标题写成 3.33vw，正文 34px 写成 1.77vw），这样在缩略预览与 1080p 放映中都能等比呈现、不溢出。`;
+
+const buildHtmlSlideMessages = (
+  script: CourseScript,
+  options: { interactive?: boolean }
+) => {
+  const sectionText = script.sections
+    .map(
+      (section) =>
+        `- ${section.id} | ${section.title} | 目的：${section.purpose} | 视觉任务：${section.slideBrief} | 口播：${section.narration.slice(0, 200)}`
+    )
+    .join('\n');
+  const interactive = options.interactive;
+  return [
+    {
+      role: 'system' as const,
+      content:
+        '你是一位擅长白底课堂课件的设计者，把讲稿转成可以直接放映的 HTML 课件页。' +
+        '只输出 JSON，不要 Markdown，不要解释。'
+    },
+    {
+      role: 'user' as const,
+      content: `课程：${script.title}
+主张：${script.thesis}
+学习目标：${script.objectives.join('；')}
+
+讲稿段落：
+${sectionText}
+
+${WHITE_SLIDE_RULES}
+${
+  interactive
+    ? `交互要求：在白底规范之上加入可交互层——要点用 <details> 分层展开，页面上留一个「课堂提问」区块，必要时给出可点击揭示的答案。但首屏必须完整呈现核心信息，不能依赖点击才能看懂。
+`
+    : '保持静态排版，不要使用交互元素。'
+}
+讲稿与页面必须一一对应，段落顺序就是页面顺序。sectionId 必须等于对应段落的 id。
+
+只输出 JSON：{"slides":[{"id":"slide-1","order":1,"sectionId":"intro","title":"页面标题","html":"<!doctype html><html>...</html>"}]}`
+    }
+  ];
+};
+
+const normalizeHtmlSlides = (
+  raw: unknown,
+  script: CourseScript
+): CourseSlide[] => {
+  const source =
+    raw && typeof raw === 'object' && Array.isArray((raw as { slides?: unknown }).slides)
+      ? ((raw as { slides: unknown[] }).slides ?? [])
+      : Array.isArray(raw)
+        ? raw
+        : [];
+  const sectionIds = new Set(script.sections.map((section) => section.id));
+  const slides: CourseSlide[] = [];
+  source.slice(0, 16).forEach((item, index) => {
+    const entry = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>;
+    const html = text(entry.html).trim();
+    if (!html.includes('<html')) return;
+    const requestedSection = text(entry.sectionId);
+    slides.push({
+      id: text(entry.id, `slide-${index + 1}`).replace(/[^a-zA-Z0-9_-]/g, '-') || `slide-${index + 1}`,
+      order: index + 1,
+      role:
+        index === 0
+          ? 'cover'
+          : index === script.sections.length - 1
+            ? 'summary'
+            : 'content',
+      title: text(entry.title, script.sections[index]?.title ?? `第 ${index + 1} 页`).slice(0, 48),
+      eyebrow:
+        index === 0
+          ? 'MICRO COURSE / 微课'
+          : `PART ${String(index + 1).padStart(2, '0')} / ${String(script.sections.length).padStart(2, '0')}`,
+      layout: index === 0 ? 'cover' : index === script.sections.length - 1 ? 'summary' : 'concept',
+      bullets: script.sections[index]?.slideBrief
+        .split(/[；。]/)
+        .map((bullet) => bullet.trim())
+        .filter(Boolean)
+        .slice(0, 3) ?? [],
+      keyPoint: script.sections[index]?.purpose,
+      html,
+      note: script.sections[index]?.purpose ?? '',
+      accent: (['brick', 'teal', 'gold', 'ink'] as const)[index % 4],
+      sectionId: sectionIds.has(requestedSection)
+        ? requestedSection
+        : script.sections[index]?.id ?? script.sections[0].id,
+      seconds: Math.max(3, Math.round(script.sections[index]?.durationSeconds ?? 30))
+    });
+  });
+  return slides;
+};
+
+/**
+ * Generates classroom courseware pages as self-contained HTML. This is the
+ * white-background courseware path, not a quick export.
+ */
+export async function generateHtmlSlidesWithModel(
+  script: CourseScript,
+  settings: RuntimeSettings,
+  options: { interactive?: boolean } = {}
+): Promise<{ slides: CourseSlide[]; meta: GenerationMeta }> {
+  const startedAt = Date.now();
+  const response = await callModel(settings, {
+    messages: buildHtmlSlideMessages(script, options),
+    json: true,
+    temperature: 0.45,
+    maxTokens: 8000
+  });
+  const slides = normalizeHtmlSlides(parseJsonLoose(response.text), script);
+  if (!slides.length) throw new Error('模型没有返回可用的 HTML 课件页');
+  return {
+    slides,
+    meta: {
+      engine: 'model',
+      provider: response.provider,
+      model: response.model,
+      durationMs: Date.now() - startedAt,
+      warnings: []
+    }
+  };
+}

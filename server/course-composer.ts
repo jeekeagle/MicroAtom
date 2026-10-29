@@ -10,6 +10,7 @@ import type {
   RuntimeSettings
 } from '../src/types';
 import { callModel, parseJsonLoose } from './llm';
+import { localCardContent, type CardContent } from './interactive-cards';
 import { projectMediaDir } from './media';
 
 const escapeHtml = (value: unknown) =>
@@ -29,7 +30,11 @@ export const MOUNT_KIND_LABEL: Record<MediaKind, string> = {
   'concept-card': '概念卡',
   infographic: '一图读懂',
   timeline: '课程时间线',
-  quiz: '问答题'
+  quiz: '问答题',
+  flashcard: '术语速记卡',
+  checklist: '掌握自检卡',
+  counterexample: '反例辨析卡',
+  challenge: '迁移挑战卡'
 };
 
 const kindAccent: Record<MediaKind, { accent: string; soft: string; tag: string }> = {
@@ -38,7 +43,11 @@ const kindAccent: Record<MediaKind, { accent: string; soft: string; tag: string 
   'concept-card': { accent: '#9b6a18', soft: '#f8efd9', tag: 'CONCEPT CARD' },
   infographic: { accent: '#23588a', soft: '#e8f0f7', tag: 'VISUAL BRIEF' },
   timeline: { accent: '#6c4b3b', soft: '#f3ece8', tag: 'COURSE TIMELINE' },
-  quiz: { accent: '#3d5c4d', soft: '#e9f0eb', tag: 'KNOWLEDGE CHECK' }
+  quiz: { accent: '#3d5c4d', soft: '#e9f0eb', tag: 'KNOWLEDGE CHECK' },
+  flashcard: { accent: '#2f5d8c', soft: '#e8eff7', tag: 'TERM CARD' },
+  checklist: { accent: '#1f7a6d', soft: '#e6f2f0', tag: 'SELF CHECK' },
+  counterexample: { accent: '#a2452f', soft: '#f9ebe5', tag: 'MISCONCEPTION' },
+  challenge: { accent: '#8a5a12', soft: '#f8efdd', tag: 'TRANSFER TASK' }
 };
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
@@ -520,4 +529,151 @@ paint();
     sizeBytes: fs.statSync(indexPath).size,
     durationSeconds
   };
+}
+
+const buildCardMessages = (
+  project: CourseProject,
+  kind: MediaKind,
+  count: number,
+  segments: ReturnType<typeof transcriptSegments>
+) => {
+  const list = segments
+    .map(
+      (segment, index) =>
+        `#${index} [${segment.startSeconds.toFixed(1)}s-${segment.endSeconds.toFixed(1)}s] ${segment.text}`
+    )
+    .join('\n');
+  const fieldHint: Record<string, string> = {
+    flashcard:
+      '用 title/definition/hook/points：title 是术语或概念名，definition 是一句话定义，hook 是记忆钩子，points 是 3-5 条要点。',
+    checklist:
+      '用 title/points/criteria：points 是 4-5 条可以打勾的自查项，criteria 是每条的达标标准。',
+    counterexample:
+      '用 title/myth/fact/question/answer：myth 是常见误区，fact 是事实，question 是判别问句，answer 是回答要点。',
+    challenge:
+      '用 title/question/hints/answer/criteria：question 是迁移任务，hints 是 2-3 级提示，answer 是参考答案，criteria 是自评标准。',
+    quiz:
+      '用 title/question/options/explain：options 给 4 个选项，其中恰好一个 correct 为 true，explain 是解析。'
+  };
+  return [
+    {
+      role: 'system' as const,
+      content:
+        '你是交互学习设计师，为微课生成可以放进课程时间轴的互动卡片。' +
+        '只输出 JSON，不要 Markdown，不要解释。内容必须来自讲稿，不要编造事实。'
+    },
+    {
+      role: 'user' as const,
+      content: `课程：${project.title}
+主题：${project.topic}
+价值引领：${project.valueGuide}
+
+逐字稿：
+${list}
+
+请生成 ${count} 张「${MOUNT_KIND_LABEL[kind] ?? kind}」。
+${fieldHint[kind] ?? ''}
+
+只输出 JSON：{"cards":[{"title":"...","subtitle":"...","definition":"...","hook":"...","points":["..."],"myth":"...","fact":"...","question":"...","hints":["..."],"answer":"...","criteria":["..."],"options":[{"label":"A","text":"...","correct":true}],"explain":"..."}]}
+每张卡片都要给出 atSeconds（命中逐字稿的时刻，取对应片段的 startSeconds）。`
+    }
+  ];
+};
+
+/**
+ * Ask the agent for interactive cards. Falls back to local templates so the
+ * composer always has something to mount.
+ */
+export async function generateInteractiveCards(
+  project: CourseProject,
+  settings: RuntimeSettings,
+  options: { kind: MediaKind; count?: number }
+): Promise<{
+  contents: Array<CardContent & { atSeconds: number }>;
+  source: 'model' | 'local-fallback';
+  warning?: string;
+}> {
+  const count = Math.min(Math.max(options.count ?? 3, 1), 6);
+  const segments = transcriptSegments(project, activeRecording(project));
+  const sections = project.script?.sections ?? [];
+  try {
+    const response = await callModel(settings, {
+      messages: buildCardMessages(project, options.kind, count, segments),
+      json: true,
+      temperature: 0.4,
+      maxTokens: 2200
+    });
+    const parsed = parseJsonLoose<{ cards?: unknown }>(response.text);
+    const raw = Array.isArray(parsed.cards) ? parsed.cards : [];
+    const contents: Array<CardContent & { atSeconds: number }> = [];
+    for (const item of raw) {
+      if (!item || typeof item !== 'object') continue;
+      const entry = item as Record<string, unknown>;
+      const title = String(entry.title || '').trim();
+      if (!title) continue;
+      const at = Number(entry.atSeconds);
+      const fallbackSection = sections[contents.length % Math.max(1, sections.length)];
+      contents.push({
+        title: title.slice(0, 40),
+        kicker: MOUNT_KIND_LABEL[options.kind],
+        subtitle: String(entry.subtitle || '').slice(0, 80),
+        definition: String(entry.definition || '').slice(0, 160),
+        hook: String(entry.hook || '').slice(0, 120),
+        points: Array.isArray(entry.points)
+          ? entry.points.slice(0, 6).map((point) => String(point).slice(0, 90))
+          : undefined,
+        myth: String(entry.myth || '').slice(0, 160),
+        fact: String(entry.fact || '').slice(0, 200),
+        question: String(entry.question || '').slice(0, 160),
+        hints: Array.isArray(entry.hints)
+          ? entry.hints.slice(0, 3).map((hint) => String(hint).slice(0, 120))
+          : undefined,
+        answer: String(entry.answer || '').slice(0, 260),
+        criteria: Array.isArray(entry.criteria)
+          ? entry.criteria.slice(0, 4).map((item2) => String(item2).slice(0, 90))
+          : undefined,
+        options: Array.isArray(entry.options)
+          ? entry.options.slice(0, 4).map((option, index) => {
+              const data = (option && typeof option === 'object' ? option : {}) as Record<
+                string,
+                unknown
+              >;
+              return {
+                label: String(data.label || String.fromCharCode(65 + index)).slice(0, 4),
+                text: String(data.text || '').slice(0, 120),
+                correct: data.correct === true
+              };
+            })
+          : undefined,
+        explain: String(entry.explain || '').slice(0, 260),
+        atSeconds: Number.isFinite(at)
+          ? Math.max(0, at)
+          : Number((fallbackSection?.durationSeconds ?? 30) * contents.length)
+      });
+    }
+    if (contents.length) return { contents, source: 'model' };
+    throw new Error('模型没有返回卡片内容');
+  } catch (error) {
+    const contents = Array.from({ length: count }, (_, index) => {
+      const section = sections[index % Math.max(1, sections.length)];
+      const local = localCardContent(project, options.kind, section?.id);
+      return {
+        ...local,
+        title: local.title,
+        atSeconds: Number(
+          (sections
+            .slice(0, index)
+            .reduce((sum, item) => sum + (item.durationSeconds ?? 0), 0) + 2).toFixed(2)
+        )
+      };
+    });
+    return {
+      contents,
+      source: 'local-fallback',
+      warning:
+        error instanceof Error
+          ? `卡片智能体暂时不可用，已用本地模板生成：${error.message}`
+          : '卡片智能体暂时不可用，已用本地模板生成'
+    };
+  }
 }

@@ -68,16 +68,20 @@ import {
 } from './media-workshop';
 import {
   buildCourseHtml,
+  generateInteractiveCards,
   locateConceptAnchors,
   MOUNT_KIND_LABEL
 } from './course-composer';
+import { renderInteractiveCard } from './interactive-cards';
 import { dataDir, distRoot } from './paths';
 import {
   generateScriptWithModel,
   generateSlidesWithModel,
+  generateHtmlSlidesWithModel,
   runAgentPipeline,
   runSkillWithModel
 } from './skills';
+import { buildWhiteSlideHtml } from './slide-html';
 import { mutateDb, readDb, resetDb, writeDb } from './store';
 import { testMimoSpeech, transcribeMimoAudio } from './speech';
 import { buildCourseTimeline } from './timeline';
@@ -1071,6 +1075,50 @@ app.post('/api/projects/:id/composer/suggest', async (req, res) => {
   }
 });
 
+
+app.post('/api/projects/:id/composer/cards', async (req, res) => {
+  try {
+    const project = findProject(req.params.id);
+    const db = readDb();
+    const body = (req.body || {}) as Record<string, unknown>;
+    const mediaKind = (String(body.mediaKind || 'quiz') as MediaKind) ?? 'quiz';
+    const count = Math.min(Math.max(Number(body.count) || 3, 1), 6);
+    const result = await generateInteractiveCards(project, db.settings, {
+      kind: mediaKind,
+      count
+    });
+    const createdAt = new Date().toISOString();
+    const mounts: CourseMount[] = result.contents.map((content) => ({
+      id: makeId('mount'),
+      mediaKind,
+      title: content.title,
+      description: content.subtitle ?? '',
+      html: renderInteractiveCard(project, mediaKind, content),
+      concept: content.title,
+      atSeconds: Number(content.atSeconds.toFixed(2)),
+      endSeconds: Number((content.atSeconds + 10).toFixed(2)),
+      placement: 'below' as MediaTriggerPlacement,
+      source: 'agent' as const,
+      createdAt,
+      updatedAt: createdAt
+    }));
+    project.mounts = [...(project.mounts ?? []), ...mounts].sort(
+      (a, b) => a.atSeconds - b.atSeconds
+    );
+    persistProject(project);
+    res.json({
+      project,
+      source: result.source,
+      warning: result.warning ?? '',
+      count: mounts.length
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : '卡片生成失败'
+    });
+  }
+});
+
 app.post('/api/projects/:id/mounts', (req, res) => {
   try {
     const project = findProject(req.params.id);
@@ -1276,18 +1324,28 @@ app.post('/api/projects/:id/actions', async (req, res) => {
       const startedAt = Date.now();
       let slides: CourseSlide[];
       let generation: GenerationMeta;
+      const engineMode = String(engine?.config.mode || 'model-first');
+      const wantsHtmlPages = engineMode === 'html-white' || engineMode === 'html-interactive';
       try {
-        const engineVisualKinds = String(engine?.config.visualKinds || '')
-          .split(',')
-          .map((item) => item.trim())
-          .filter(Boolean);
-        const engineDensity = String(engine?.config.visualDensity || 'balanced');
-        const result = await generateSlidesWithModel(project.script, settings, {
-          visualKinds: engineVisualKinds,
-          density: engineDensity
-        });
-        slides = result.slides;
-        generation = result.meta;
+        if (wantsHtmlPages) {
+          const result = await generateHtmlSlidesWithModel(project.script, settings, {
+            interactive: engineMode === 'html-interactive'
+          });
+          slides = result.slides;
+          generation = result.meta;
+        } else {
+          const engineVisualKinds = String(engine?.config.visualKinds || '')
+            .split(',')
+            .map((item) => item.trim())
+            .filter(Boolean);
+          const engineDensity = String(engine?.config.visualDensity || 'balanced');
+          const result = await generateSlidesWithModel(project.script, settings, {
+            visualKinds: engineVisualKinds,
+            density: engineDensity
+          });
+          slides = result.slides;
+          generation = result.meta;
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : '模型生成课件失败';
         if (!settings.allowLocalFallback) {
@@ -1295,6 +1353,12 @@ app.post('/api/projects/:id/actions', async (req, res) => {
           return;
         }
         slides = generateSlides(project.script, project.slides);
+        if (wantsHtmlPages) {
+          slides = slides.map((slide) => ({
+            ...slide,
+            html: slide.html ?? buildWhiteSlideHtml(slide, project)
+          }));
+        }
         generation = {
           engine: 'local-fallback',
           provider: 'local',
@@ -1305,6 +1369,12 @@ app.post('/api/projects/:id/actions', async (req, res) => {
         };
       }
       project.slides = applySlideEngine(slides, engine);
+      if (wantsHtmlPages) {
+        project.slides = project.slides.map((slide) => ({
+          ...slide,
+          html: slide.html ?? buildWhiteSlideHtml(slide, project)
+        }));
+      }
       project.selectedEngines = { ...project.selectedEngines, slides: engine?.id };
       project.generation = { ...project.generation, slides: generation };
       project.stage = 'slides';

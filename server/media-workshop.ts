@@ -7,6 +7,7 @@ import type {
   ProductionEngine
 } from '../src/types';
 import { mediaEngineForKind } from './engines';
+import { localCardContent, renderInteractiveCard } from './interactive-cards';
 
 export const MEDIA_KIND_LABEL: Record<MediaKind, string> = {
   'knowledge-graph': '知识图谱',
@@ -14,7 +15,11 @@ export const MEDIA_KIND_LABEL: Record<MediaKind, string> = {
   'concept-card': '概念卡',
   infographic: '一图读懂',
   timeline: '课程时间线',
-  quiz: '问答题'
+  quiz: '问答题',
+  flashcard: '术语速记卡',
+  checklist: '掌握自检卡',
+  counterexample: '反例辨析卡',
+  challenge: '迁移挑战卡'
 };
 
 export interface MediaGenerationInput {
@@ -34,7 +39,11 @@ const mediaAccents: Record<MediaKind, { accent: string; soft: string; label: str
   'concept-card': { accent: '#9b6a18', soft: '#f8efd9', label: 'CONCEPT CARD' },
   infographic: { accent: '#23588a', soft: '#e8f0f7', label: 'VISUAL BRIEF' },
   timeline: { accent: '#6c4b3b', soft: '#f3ece8', label: 'COURSE TIMELINE' },
-  quiz: { accent: '#3d5c4d', soft: '#e9f0eb', label: 'KNOWLEDGE CHECK' }
+  quiz: { accent: '#3d5c4d', soft: '#e9f0eb', label: 'KNOWLEDGE CHECK' },
+  flashcard: { accent: '#2f5d8c', soft: '#e8eff7', label: 'TERM CARD' },
+  checklist: { accent: '#1f7a6d', soft: '#e6f2f0', label: 'SELF CHECK' },
+  counterexample: { accent: '#a2452f', soft: '#f9ebe5', label: 'MISCONCEPTION' },
+  challenge: { accent: '#8a5a12', soft: '#f8efdd', label: 'TRANSFER TASK' }
 };
 
 const escapeHtml = (value: unknown) =>
@@ -566,6 +575,11 @@ export function buildMediaHtml(
       return timelineHtml(project, script);
     case 'quiz':
       return quizHtml(project, script);
+    case 'flashcard':
+    case 'checklist':
+    case 'counterexample':
+    case 'challenge':
+      return renderInteractiveCard(project, kind, localCardContent(project, kind, sectionId));
     default:
       throw new Error('不支持的介质类型');
   }

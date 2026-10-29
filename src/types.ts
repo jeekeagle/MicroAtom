@@ -8,7 +8,11 @@ export type MediaKind =
   | 'concept-card'
   | 'infographic'
   | 'timeline'
-  | 'quiz';
+  | 'quiz'
+  | 'flashcard'
+  | 'checklist'
+  | 'counterexample'
+  | 'challenge';
 export type MediaTriggerPlacement = 'below' | 'side' | 'focus';
 export type ProjectStatus = 'draft' | 'producing' | 'review' | 'done';
 export type JobStatus = 'idle' | 'queued' | 'running' | 'done' | 'error';
@@ -191,6 +195,7 @@ export interface CourseSlide {
   ask?: string;
   takeaway?: string;
   visual?: SlideVisual;
+  html?: string;
   note: string;
   accent: 'brick' | 'teal' | 'gold' | 'ink';
   sectionId: string;

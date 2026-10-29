@@ -5,6 +5,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { ProjectStudioPage } from './pages/ProjectStudioPage';
 import { CourseComposerPage } from './pages/CourseComposerPage';
+import { MediaWorkshopPage } from './pages/MediaWorkshopPage';
 import { AgentsPage } from './pages/AgentsPage';
 import { SkillsPage } from './pages/SkillsPage';
 import { EnginesPage } from './pages/EnginesPage';
@@ -52,6 +53,7 @@ function AppRoutes() {
         <Route path="/skills" element={<SkillsPage />} />
         <Route path="/engines" element={<EnginesPage />} />
         <Route path="/memory" element={<MemoryPage />} />
+        <Route path="/media-workshop" element={<MediaWorkshopPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

@@ -277,6 +277,21 @@ export function SlideCanvas({
     );
   })();
 
+  if (slide.html) {
+    return (
+      <div
+        className={`slide-canvas slide-html-page accent-${slide.accent} ${compact ? 'is-compact' : ''} ${className}`}
+        data-visual="html"
+      >
+        <iframe
+          title={slide.title}
+          srcDoc={slide.html}
+          sandbox="allow-same-origin allow-popups"
+        />
+      </div>
+    );
+  }
+
   return (
     <div
       className={`slide-canvas ${modeClass} accent-${slide.accent} ${compact ? 'is-compact' : ''} ${className}`}

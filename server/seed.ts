@@ -204,6 +204,76 @@ export const seedProjects: CourseProject[] = [
 
 export const seedSkills: AgentSkill[] = [
   {
+    id: 'concept-scan',
+    name: '全文概念扫描',
+    category: '智能体',
+    description: '通读整份逐字稿，定位关键概念、判断概念类型并给出精确出现时刻。',
+    enabled: true,
+    version: '1.0.0',
+    model: '教学推理模型',
+    latencyMs: 1460,
+    runs: 0,
+    inputHint: '逐字稿 / 讲稿关键词',
+    outputHint: '概念清单 + 时间点 + 建议卡片类型',
+    origin: 'built-in'
+  },
+  {
+    id: 'qa-author',
+    name: '交互问答编写',
+    category: '智能体',
+    description: '把关键概念写成可判分的随堂问答，含选项、答案、解析与追问。',
+    enabled: true,
+    version: '1.0.0',
+    model: '教学推理模型',
+    latencyMs: 1520,
+    runs: 0,
+    inputHint: '概念清单 / 讲稿段落',
+    outputHint: '问答卡（题干 + 选项 + 答案 + 解析）',
+    origin: 'built-in'
+  },
+  {
+    id: 'card-compose',
+    name: '介质卡片合成',
+    category: '智能体',
+    description: '按卡片类型组织内容：术语速记、自检清单、反例辨析与迁移挑战。',
+    enabled: true,
+    version: '1.0.0',
+    model: '教学推理模型',
+    latencyMs: 1280,
+    runs: 0,
+    inputHint: '概念 / 讲稿 / 卡片类型',
+    outputHint: '卡片结构化内容',
+    origin: 'built-in'
+  },
+  {
+    id: 'slide-whiteprint',
+    name: '白底课件设计',
+    category: '课件',
+    description: '按白底课堂课件规范排版：顶部课程名、左上主标题、副标题与正文层级。',
+    enabled: true,
+    version: '1.0.0',
+    model: '视觉设计模型',
+    latencyMs: 2100,
+    runs: 0,
+    inputHint: '已确认讲稿 / 页面任务',
+    outputHint: '白底 HTML 课件页',
+    origin: 'built-in'
+  },
+  {
+    id: 'slide-interactive',
+    name: '交互课件设计',
+    category: '课件',
+    description: '在白底课件规范上加入可交互层：点击揭示、分层要点与随堂提问。',
+    enabled: true,
+    version: '1.0.0',
+    model: '视觉设计模型',
+    latencyMs: 2380,
+    runs: 0,
+    inputHint: '已确认讲稿 / 页面任务',
+    outputHint: '可交互 HTML 课件页',
+    origin: 'built-in'
+  },
+  {
     id: 'brief-analyze',
     name: '备课意图分析',
     category: '讲稿',
@@ -388,6 +458,18 @@ export const seedSkills: AgentSkill[] = [
 ];
 
 export const seedAgents: AgentProfile[] = [
+  {
+    id: 'agent-insight',
+    name: '洞察',
+    role: '交互学习智能体',
+    description: '通读逐字稿定位概念，编写随堂问答，并为概念挑选与合成互动卡片。',
+    status: 'active',
+    model: '教学推理模型',
+    skillIds: ['concept-scan', 'qa-author', 'card-compose'],
+    color: 'gold',
+    runs: 0,
+    lastRun: '尚未运行'
+  },
   {
     id: 'agent-design',
     name: '析课',

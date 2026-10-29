@@ -87,6 +87,18 @@ export function readDb(): Database {
       ...(database.memory ?? {})
     };
     database.engines = normalizeEngines(database.engines);
+    // Built-in skills and agents are added to older stores so new capabilities
+    // show up without wiping the teacher's own configuration.
+    const storedSkillIds = new Set((database.skills ?? []).map((skill) => skill.id));
+    database.skills = [
+      ...seedSkills.filter((skill) => !storedSkillIds.has(skill.id)),
+      ...(database.skills ?? [])
+    ];
+    const storedAgentIds = new Set((database.agents ?? []).map((agent) => agent.id));
+    database.agents = [
+      ...seedAgents.filter((agent) => !storedAgentIds.has(agent.id)),
+      ...(database.agents ?? [])
+    ];
     database.workflows = normalizeWorkflows(database.workflows);
     const workflows = database.workflows;
     const projectsBefore = JSON.stringify(database.projects);
