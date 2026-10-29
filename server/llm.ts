@@ -498,11 +498,20 @@ export async function listServiceModels(
         error: `服务返回 ${response.status}：${raw.slice(0, 200)}`
       };
     }
-    const payload = JSON.parse(raw) as { data?: Array<{ id?: string }> };
-    const models = (payload.data ?? [])
-      .map((item) => (item && typeof item.id === 'string' ? item.id : ''))
-      .filter(Boolean)
-      .sort();
+    const payload = JSON.parse(raw) as {
+      data?: Array<{ id?: string; name?: string; slug?: string }>;
+      models?: Array<{ id?: string; slug?: string; display_name?: string; name?: string }>;
+    };
+    const extracted = new Set<string>();
+    for (const item of payload.data ?? []) {
+      const val = (item?.id || item?.slug || item?.name || '').trim();
+      if (val) extracted.add(val);
+    }
+    for (const item of payload.models ?? []) {
+      const val = (item?.slug || item?.id || item?.display_name || item?.name || '').trim();
+      if (val) extracted.add(val);
+    }
+    const models = Array.from(extracted).sort();
     return { models, provider: providerLabel(base) };
   } catch (error) {
     return {
