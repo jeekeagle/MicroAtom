@@ -4,6 +4,7 @@ import { AppShell } from './components/AppShell';
 import { DashboardPage } from './pages/DashboardPage';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { ProjectStudioPage } from './pages/ProjectStudioPage';
+import { CourseComposerPage } from './pages/CourseComposerPage';
 import { AgentsPage } from './pages/AgentsPage';
 import { SkillsPage } from './pages/SkillsPage';
 import { EnginesPage } from './pages/EnginesPage';
@@ -46,6 +47,7 @@ function AppRoutes() {
         <Route path="/" element={<DashboardPage />} />
         <Route path="/projects" element={<ProjectsPage />} />
         <Route path="/projects/:projectId" element={<ProjectStudioPage />} />
+        <Route path="/projects/:projectId/course" element={<CourseComposerPage />} />
         <Route path="/agents" element={<AgentsPage />} />
         <Route path="/skills" element={<SkillsPage />} />
         <Route path="/engines" element={<EnginesPage />} />

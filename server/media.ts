@@ -12,6 +12,7 @@ import type {
 } from '../src/types';
 import { describeModelConfig, hasMimoApiKey } from './llm';
 import { mediaRoot, serverScriptsRoot } from './paths';
+import { renderVisualSvg, type VisualTheme } from '../src/lib/slideVisuals';
 import { MIMO_VOICES, synthesizeMimoAudio } from './speech';
 import { buildCourseTimeline } from './timeline';
 
@@ -523,6 +524,13 @@ const escapeHtml = (value: string) =>
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 
+const slideAccentSofts: Record<CourseSlide['accent'], string> = {
+  brick: '#fbeee9',
+  teal: '#e8f3f1',
+  gold: '#f8f1e2',
+  ink: '#e9edf1'
+};
+
 const accentColors: Record<CourseSlide['accent'], string> = {
   brick: '#c95132',
   teal: '#28766c',
@@ -530,8 +538,45 @@ const accentColors: Record<CourseSlide['accent'], string> = {
   ink: '#1b2721'
 };
 
+﻿const visualThemes: Record<CourseSlide['accent'], VisualTheme> = {
+  brick: { accent: '#c0512f', accentSoft: '#fbeee9', ink: '#16202b', muted: '#64707c', line: '#e3e7eb', panel: '#ffffff' },
+  teal: { accent: '#1f7a6d', accentSoft: '#e8f3f1', ink: '#16202b', muted: '#64707c', line: '#e3e7eb', panel: '#ffffff' },
+  gold: { accent: '#a97721', accentSoft: '#f8f1e2', ink: '#16202b', muted: '#64707c', line: '#e3e7eb', panel: '#ffffff' },
+  ink: { accent: '#3f5147', accentSoft: '#e9edf1', ink: '#16202b', muted: '#64707c', line: '#e3e7eb', panel: '#ffffff' }
+};
+
+function slideVisual(slide: CourseSlide): string {
+  const canvas =
+    slide.layout === 'compare'
+      ? { width: 1000, height: 430 }
+      : slide.layout === 'split' || slide.layout === 'steps' || slide.layout === 'case'
+        ? { width: 900, height: 540 }
+        : { width: 1000, height: 620 };
+  const svg = renderVisualSvg(
+    slide.visual,
+    visualThemes[slide.accent] ?? visualThemes.brick,
+    canvas
+  );
+  if (!svg) return '';
+  return `<div class="visual-wrap">${svg}</div>`;
+}
+
 function slideBody(slide: CourseSlide) {
   const bullets = slide.bullets.map(escapeHtml);
+  const visual = slideVisual(slide);
+  const keyPoint = slide.keyPoint ? `<p class="key-point">${escapeHtml(slide.keyPoint)}</p>` : '';
+  const supporting = (slide.supporting ?? []).filter(Boolean);
+  const supportingBlock = supporting.length
+    ? `<ul class="supporting">${supporting.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
+    : '';
+  const ask = slide.ask
+    ? `<div class="ask"><span>课堂提问</span><p>${escapeHtml(slide.ask)}</p></div>`
+    : '';
+  const takeaway = slide.takeaway
+    ? `<div class="takeaway"><span>一句话带走</span><p>${escapeHtml(slide.takeaway)}</p></div>`
+    : '';
+  const points = bullets.map((bullet) => `<div><span></span><p>${bullet}</p></div>`).join('');
+
   if (slide.layout === 'cover') {
     return `<div class="cover">
       <span class="kicker">MICRO COURSE</span>
@@ -547,7 +592,7 @@ function slideBody(slide: CourseSlide) {
           (bullet, index) =>
             `<div><span>${String(index + 1).padStart(2, '0')}</span><p>${bullet}</p></div>`
         )
-        .join('')}</div></div>`;
+        .join('')}</div>${ask}</div>`;
   }
   if (slide.layout === 'compare') {
     return `<div class="standard"><h1>${escapeHtml(slide.title)}</h1>
@@ -557,61 +602,105 @@ function slideBody(slide: CourseSlide) {
           (bullet, index) =>
             `<div><span>${index === 0 ? 'A / 观察' : 'B / 判断'}</span><p>${bullet}</p></div>`
         )
-        .join('')}</div></div>`;
+        .join('')}</div>${visual}${ask}</div>`;
   }
   if (slide.layout === 'quote') {
     return `<div class="standard quote"><span class="quote-mark">“</span>
       <h1>${escapeHtml(slide.title)}</h1>
       <div class="keywords">${bullets.map((bullet) => `<span>${bullet}</span>`).join('')}</div>
+      ${takeaway}
     </div>`;
   }
+  if (slide.layout === 'steps') {
+    return `<div class="standard steps"><span class="key-label">PROCESS / 步骤</span>
+      <h1>${escapeHtml(slide.title)}</h1>${keyPoint}
+      ${visual || `<div class="points">${points}</div>`}${ask}</div>`;
+  }
+  if (slide.layout === 'case') {
+    return `<div class="standard case">
+      <div class="case-scene"><span class="case-tag">情境 / CASE</span>
+        <h1>${escapeHtml(slide.title)}</h1>${keyPoint}${visual}</div>
+      <div class="case-insight"><span class="case-tag">启示 / INSIGHT</span>
+        <div class="points">${points}</div>${takeaway}</div>
+    </div>`;
+  }
+  if (slide.layout === 'split' || visual) {
+    return `<div class="standard split">
+      <div class="copy"><span class="key-label">KEY IDEA</span>
+        <h1>${escapeHtml(slide.title)}</h1>${keyPoint}
+        <div class="points">${points}</div>${supportingBlock}</div>
+      ${visual}${ask}</div>`;
+  }
   return `<div class="standard"><span class="key-label">KEY IDEA</span>
-    <h1>${escapeHtml(slide.title)}</h1>
-    <div class="points">${bullets
-      .map((bullet) => `<div><span></span><p>${bullet}</p></div>`)
-      .join('')}</div></div>`;
+    <h1>${escapeHtml(slide.title)}</h1>${keyPoint}
+    <div class="points">${points}</div>${supportingBlock}${ask}</div>`;
 }
 
-function buildSlideHtml(slide: CourseSlide) {
+﻿export function buildSlideHtml(slide: CourseSlide) {
   const accent = accentColors[slide.accent];
+  const accentSoft = slideAccentSofts[slide.accent];
   const dark = slide.layout === 'cover';
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
     *{box-sizing:border-box;margin:0;padding:0}
     html,body{width:1920px;height:1080px;overflow:hidden}
-    body{font-family:"Microsoft YaHei UI","PingFang SC",sans-serif;background:${dark ? '#17231e' : '#fbfaf6'};color:${dark ? '#f4f0e7' : '#1d211d'}}
-    .slide{position:relative;width:1920px;height:1080px;padding:78px 110px 72px;background:${dark ? '#17231e' : '#fbfaf6'};overflow:hidden}
-    .slide:before{content:"";position:absolute;inset:0;background-image:linear-gradient(rgba(29,33,29,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(29,33,29,.035) 1px,transparent 1px);background-size:60px 60px;pointer-events:none}
+    body{font-family:"Microsoft YaHei UI","PingFang SC",sans-serif;background:${dark ? '#17231e' : '#ffffff'};color:${dark ? '#f4f0e7' : '#16202b'}}
+    .slide{position:relative;width:1920px;height:1080px;padding:78px 110px 72px;background:${dark ? '#17231e' : '#ffffff'};overflow:hidden}
+    .slide:before{content:"";position:absolute;inset:0;background-image:linear-gradient(rgba(22,32,43,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(22,32,43,.03) 1px,transparent 1px);background-size:60px 60px;pointer-events:none}
     .dark:before{background-image:linear-gradient(rgba(255,255,255,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.04) 1px,transparent 1px)}
-    .topline{position:relative;display:flex;justify-content:space-between;font-size:20px;letter-spacing:.08em;text-transform:uppercase;color:${dark ? 'rgba(244,240,231,.62)' : '#73776f'};font-weight:600}
+    .topline{position:relative;display:flex;justify-content:space-between;font-size:20px;letter-spacing:.08em;text-transform:uppercase;color:${dark ? 'rgba(244,240,231,.62)' : '#8a949e'};font-weight:600}
     .rule{position:relative;width:96px;height:7px;background:${accent};margin-top:26px}
     .cover{position:relative;display:flex;flex-direction:column;justify-content:center;height:780px;max-width:1480px}
     .kicker{font-size:20px;letter-spacing:.2em;color:${accent};font-weight:700;margin-bottom:32px}
     h1{font-family:"Songti SC","STSong","Noto Serif CJK SC",serif;font-size:86px;line-height:1.18;font-weight:600;letter-spacing:0}
-    .cover h1{font-size:108px;max-width:1440px}
+    .cover h1{font-size:104px;max-width:1440px}
     .cover p{font-size:34px;line-height:1.6;color:rgba(244,240,231,.78);max-width:1180px;margin-top:42px}
     .cover-foot{display:flex;justify-content:space-between;align-items:flex-end;margin-top:84px;color:rgba(244,240,231,.56);font-size:20px}
     .cover-foot b{font-family:Georgia,serif;font-size:64px;color:${accent};font-weight:400}
-    .standard{position:relative;padding-top:120px;height:780px}
-    .standard h1{font-size:68px;max-width:1500px}
-    .key-label{display:block;font-size:18px;letter-spacing:.2em;color:${accent};font-weight:700;margin-bottom:28px}
-    .objectives{display:grid;grid-template-columns:1fr 1fr;gap:30px 56px;margin-top:72px}
-    .objectives>div{display:flex;gap:24px;border-top:2px solid rgba(29,33,29,.16);padding-top:24px}
+    .standard{position:relative;padding-top:96px;height:780px}
+    .standard h1{font-size:66px;max-width:1500px}
+    .key-label{display:block;font-size:18px;letter-spacing:.2em;color:${accent};font-weight:700;margin-bottom:24px}
+    .objectives{display:grid;grid-template-columns:1fr 1fr;gap:30px 56px;margin-top:60px}
+    .objectives>div{display:flex;gap:24px;border-top:2px solid rgba(22,32,43,.14);padding-top:24px}
     .objectives span{font-family:Georgia,serif;font-size:28px;color:${accent};min-width:44px}
-    .objectives p{font-size:30px;line-height:1.48;color:#333a33}
-    .points{margin-top:60px;display:grid;gap:30px;max-width:1480px}
-    .points>div{display:flex;align-items:flex-start;gap:26px;border-top:1px solid rgba(29,33,29,.14);padding-top:24px}
+    .objectives p{font-size:30px;line-height:1.48;color:#2b3641}
+    .points{margin-top:44px;display:grid;gap:26px;max-width:1480px}
+    .points>div{display:flex;align-items:flex-start;gap:26px;border-top:1px solid rgba(22,32,43,.12);padding-top:22px}
     .points span{width:58px;height:4px;background:${accent};margin-top:20px;flex:none}
-    .points p{font-size:32px;line-height:1.5;color:#333a33}
-    .compare{display:grid;grid-template-columns:1fr 1fr;gap:56px;margin-top:70px}
-    .compare>div{border-top:3px solid ${accent};padding-top:30px;min-height:260px}
+    .points p{font-size:31px;line-height:1.5;color:#2b3641}
+    .compare{display:grid;grid-template-columns:1fr 1fr;gap:56px;margin-top:60px}
+    .compare>div{border-top:3px solid ${accent};padding-top:30px;min-height:200px}
     .compare span{font-size:19px;letter-spacing:.12em;color:${accent};font-weight:700}
-    .compare p{font-size:34px;line-height:1.5;margin-top:26px;color:#333a33}
+    .compare p{font-size:34px;line-height:1.5;margin-top:26px;color:#2b3641}
     .quote-mark{position:absolute;right:0;top:40px;font-family:Georgia,serif;font-size:300px;line-height:1;color:${accent};opacity:.12}
-    .quote h1{font-size:62px;line-height:1.45;max-width:1530px;margin-top:76px}
+    .quote h1{font-size:62px;line-height:1.45;max-width:1530px;margin-top:70px}
     .keywords{display:flex;gap:16px;margin-top:58px;flex-wrap:wrap}
-    .keywords span{border:1px solid ${accent};color:${accent};padding:12px 24px;font-size:22px;border-radius:4px;background:${dark ? '#17231e' : '#fbfaf6'}}
-    .footer{position:absolute;left:110px;right:110px;bottom:50px;display:flex;align-items:center;gap:22px;color:${dark ? 'rgba(244,240,231,.5)' : '#8a8e86'};font-size:18px;letter-spacing:.08em}
-    .footer i{display:block;width:72px;height:1px;background:${dark ? 'rgba(244,240,231,.24)' : 'rgba(29,33,29,.24)'}
+    .keywords span{border:1px solid ${accent};color:${accent};padding:12px 24px;font-size:22px;border-radius:4px}
+    .split{display:grid;grid-template-columns:minmax(0,.92fr) minmax(0,1.08fr);gap:64px;align-items:start}
+    .split .copy{min-width:0}
+    .split .visual-wrap{max-height:600px}
+    .split .visual-wrap svg{max-height:548px}
+    .split .points p{font-size:29px}
+    .steps .visual-wrap{margin-top:24px}
+    .case{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:56px;align-items:start}
+    .case-scene,.case-insight{min-width:0}
+    .case-tag{color:${accent};font-size:22px;font-weight:700;letter-spacing:.14em}
+    .case-insight{padding-left:40px;border-left:1px solid rgba(22,32,43,.12)}
+    .compare .visual-wrap{max-width:920px;margin:26px auto 0}
+    .visual-wrap{background:#ffffff;border:1px solid #e3e7eb;border-radius:18px;padding:26px 28px;box-shadow:0 10px 34px rgba(22,32,43,.05);max-height:430px;display:flex;align-items:center;justify-content:center}
+    .visual-wrap svg{display:block;width:100%;height:100%;max-height:378px;object-fit:contain}
+    .visual-caption{margin-top:16px;color:#939ea8;font-size:20px;text-align:right}
+    .key-point{margin:24px 0 0;padding-left:20px;border-left:6px solid ${accent};font-size:33px;font-weight:600;line-height:1.45;color:#2b3641}
+    .supporting{margin:26px 0 0;padding:0;list-style:none;display:grid;gap:12px}
+    .supporting li{position:relative;padding-left:24px;color:#64707c;font-size:25px;line-height:1.55}
+    .supporting li:before{content:"";position:absolute;top:13px;left:0;width:8px;height:8px;border-radius:50%;background:${accent}}
+    .ask{margin-top:32px;padding:22px 26px;display:flex;gap:20px;align-items:baseline;background:${accentSoft};border-radius:12px}
+    .ask span{color:${accent};font-size:22px;font-weight:700;letter-spacing:.12em;flex:none}
+    .ask p{font-size:28px;line-height:1.5;color:#2b3641}
+    .takeaway{margin-top:30px;padding-top:22px;border-top:1px solid rgba(22,32,43,.12)}
+    .takeaway span{font-size:20px;letter-spacing:.14em;color:#8a949e}
+    .takeaway p{margin-top:8px;font-size:33px;font-weight:600;color:#16202b;line-height:1.4}
+    .footer{position:absolute;left:110px;right:110px;bottom:50px;display:flex;align-items:center;gap:22px;color:${dark ? 'rgba(244,240,231,.5)' : '#8a949e'};font-size:18px;letter-spacing:.08em}
+    .footer i{display:block;width:72px;height:1px;background:${dark ? 'rgba(244,240,231,.24)' : 'rgba(22,32,43,.18)'}}
   </style></head><body><div class="slide ${dark ? 'dark' : ''}">
     <div class="topline"><span>${escapeHtml(slide.eyebrow)}</span><span>课序 / KEXU</span></div>
     <div class="rule"></div>

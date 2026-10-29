@@ -11,9 +11,11 @@ import type {
   CourseScript,
   CourseSlide,
   CourseWorkflow,
+  CourseMount,
   CreateProjectInput,
   GenerationMeta,
   MediaKind,
+  MediaTriggerPlacement,
   ProductionEngine,
   ProductionStage,
   RecordingAsset,
@@ -64,6 +66,11 @@ import {
   createMediaArtifact,
   type MediaGenerationInput
 } from './media-workshop';
+import {
+  buildCourseHtml,
+  locateConceptAnchors,
+  MOUNT_KIND_LABEL
+} from './course-composer';
 import { dataDir, distRoot } from './paths';
 import {
   generateScriptWithModel,
@@ -188,6 +195,18 @@ const applySlideEngine = (
       Number.isFinite(maxBullets) && maxBullets > 0
         ? slide.bullets.slice(0, Math.max(1, Math.round(maxBullets)))
         : slide.bullets;
+    const density = String(engine.config.visualDensity || 'balanced');
+    const cleanLayout = density === 'clean';
+    const richLayout = density === 'rich';
+    if (cleanLayout) {
+      return {
+        ...slide,
+        bullets: bullets.slice(0, 2),
+        supporting: undefined,
+        visual: undefined,
+        note: `精简排版：突出主线，细节留给讲稿。\n${slide.note}`
+      };
+    }
     if (bias === 'visual') {
       return {
         ...slide,
@@ -201,6 +220,13 @@ const applySlideEngine = (
         bullets,
         eyebrow: slide.eyebrow || 'STRUCTURE',
         note: `结构讲解：先说关系，再给例子。\n${slide.note}`
+      };
+    }
+    if (richLayout) {
+      return {
+        ...slide,
+        bullets: bullets.length ? bullets : slide.bullets,
+        note: `信息增强版：主结论、要点、补充说明与图示各司其职。\n${slide.note}`
       };
     }
     return { ...slide, bullets };
@@ -246,6 +272,15 @@ const splitClauses = (value: string) =>
     .map((item) => item.trim())
     .filter(Boolean);
 
+/**
+ * Every brief needs a value thread, even when the teacher did not say one.
+ */
+const defaultValueGuide = (topic: string) =>
+  `把"先找条件、再下结论"的习惯带出课堂：学生不仅理解${topic}，还要能用它判断真实问题，并对自己的判断负责。`;
+
+const defaultLearnerProfile = (grade: string) =>
+  `${grade || '本阶段'}学生已有生活经验与直观判断力，但抽象概念与条件分析是难点，容易把结论当成答案，需要用具体情境带着他们一步步推。`;
+
 const localAnalyzeBrief = (
   transcript: string,
   current: Partial<CreateProjectInput>,
@@ -261,6 +296,7 @@ const localAnalyzeBrief = (
     .replace(/[“”"'《》]/g, '')
     .trim();
   const topic = (current.topic?.trim() || cleaned || text).slice(0, 30);
+  const briefTitle = topic.length > 20 ? `${topic.slice(0, 18)}·微课` : topic;
   const subject =
     current.subject?.trim() ||
     subjectHints.find((item) => text.includes(item)) ||
@@ -281,7 +317,7 @@ const localAnalyzeBrief = (
   );
 
   return {
-    title: current.title?.trim() || topic,
+    title: current.title?.trim() || briefTitle,
     topic,
     subject,
     grade,
@@ -291,8 +327,14 @@ const localAnalyzeBrief = (
     ),
     mode,
     idea: current.idea?.trim() || text,
-    valueGuide: current.valueGuide?.trim() || (valueClause ?? '').slice(0, 240),
-    learnerProfile: current.learnerProfile?.trim() || (learnerClause ?? '').slice(0, 240),
+    valueGuide:
+      current.valueGuide?.trim() ||
+      (valueClause ?? '').slice(0, 240) ||
+      defaultValueGuide(topic),
+    learnerProfile:
+      current.learnerProfile?.trim() ||
+      (learnerClause ?? '').slice(0, 240) ||
+      defaultLearnerProfile(grade),
     style: current.style?.trim() || memory.teachingStyle || '清晰、口语化、问题驱动'
   };
 };
@@ -462,8 +504,10 @@ app.post('/api/projects', (req, res) => {
 app.post('/api/projects/analyze-brief', async (req, res) => {
   const input = (req.body || {}) as AnalyzeBriefInput;
   const transcript = String(input.transcript || '').replace(/\s+/g, ' ').trim();
-  if (transcript.length < 8) {
-    res.status(400).json({ error: '请先完整说一段课程设想，再进行整理' });
+  const seededTopic = String(input.current?.topic || '').trim();
+  const seededIdea = String(input.current?.idea || '').trim();
+  if (transcript.length < 4 && seededTopic.length < 2 && seededIdea.length < 4) {
+    res.status(400).json({ error: '请先说一段课程设想，或写下课程主题，再交给智能体分析' });
     return;
   }
   const db = readDb();
@@ -471,7 +515,8 @@ app.post('/api/projects/analyze-brief', async (req, res) => {
   const memory = db.memory;
   const engine = resolveEngine(db.engines, 'analysis', input.engineId);
   const current = input.current ?? {};
-  const fallback = localAnalyzeBrief(transcript, current, memory);
+  const briefText = transcript || [seededTopic, seededIdea].filter(Boolean).join('。');
+  const fallback = localAnalyzeBrief(briefText, current, memory);
   const startedAt = Date.now();
 
   try {
@@ -483,8 +528,10 @@ app.post('/api/projects/analyze-brief', async (req, res) => {
         {
           role: 'system',
           content:
-            '你是一位课程教务助理。请把教师的口述备课设想整理成结构化字段。' +
-            '只输出 JSON，不要 Markdown，不要解释。不要编造口述中没有的学校、姓名或具体事实。'
+            '你是一位课程教务助理兼教学设计师。请把教师的口述或文字设想整理成结构化字段，' +
+            '并主动优化课程名称与主题表述，让字段齐全、可直接进入备课。' +
+            '只输出 JSON，不要 Markdown，不要解释。不要编造口述中没有的学校、姓名或具体事实。' +
+            '每一个字段都必须有内容，价值引领不允许留空。'
         },
         {
           role: 'user',
@@ -499,18 +546,19 @@ ${transcript}
 
 请输出：
 {
-  "title": "课程名称，简洁有辨识度",
-  "topic": "课程主题，2-20 字",
-  "subject": "学科",
-  "grade": "学段或年级",
+  "title": "课程名称：去掉我今天要讲、给某某年级讲这类口语前缀，控制在 8-18 字，简洁有辨识度",
+  "topic": "课程主题：2-20 字，是这节课真正要讲清楚的核心问题",
+  "subject": "学科：口述没有明说时，依据内容推断，并与教师记忆中的学科保持一致",
+  "grade": "学段或年级：口述没有明说时依据内容推断，并与教师记忆中的学段保持一致",
   "durationMinutes": 8,
   "mode": "auto | oral | ppt",
-  "idea": "整理后的备课想法，保留教师原意与关键情境",
-  "valueGuide": "价值引领；口述没有提到时给出与主题匹配的一条",
-  "learnerProfile": "学情；口述没有提到时结合年级给出合理推断",
-  "style": "讲述风格；优先沿用教师记忆中的风格"
+  "idea": "整理后的备课想法：保留教师原意与关键情境，理顺顺序，去掉口水话",
+  "valueGuide": "价值引领：必须给出一条可落地、可在课堂上落实的育人落点，结合本主题与教师的教学心得",
+  "learnerProfile": "学情：结合年级写出学生已会什么、容易卡在哪里",
+  "style": "讲述风格：优先沿用教师记忆中的风格"
 }
-时长必须是 3-45 的整数。mode 中 auto 表示全自动，oral 表示教师口语稿驱动，ppt 表示 PPT 驱动。`
+时长必须是 3-45 的整数。mode 中 auto 表示全自动，oral 表示教师口语稿驱动，ppt 表示 PPT 驱动。
+valueGuide 与 learnerProfile 必须有实质内容，不能写"无"或留空。`
         }
       ]
     });
@@ -518,7 +566,7 @@ ${transcript}
       parseJsonLoose(response.text),
       current,
       memory,
-      transcript
+      briefText
     );
     const result: AnalyzeBriefResult = {
       draft,
@@ -526,7 +574,8 @@ ${transcript}
       warnings: [],
       source: 'model',
       engineId: engine?.id,
-      engineName: engine?.name
+      engineName: engine?.name,
+      fields: Object.keys(draft)
     };
     res.json({
       ...result,
@@ -997,6 +1046,184 @@ app.post('/api/projects/:id/recordings/:recordingId/transcript', (req, res) => {
 
 const activeRenders = new Set<string>();
 
+
+/* ------------------------------------------------------------------ */
+/* Course composer: mount media onto the timeline and build the        */
+/* interactive HTML course.                                            */
+/* ------------------------------------------------------------------ */
+
+app.post('/api/projects/:id/composer/suggest', async (req, res) => {
+  try {
+    const project = findProject(req.params.id);
+    const settings = readDb().settings;
+    const result = await locateConceptAnchors(project, settings);
+    res.json({
+      anchors: result.anchors,
+      source: result.source,
+      warning: result.warning ?? '',
+      artifacts: project.artifacts ?? [],
+      labels: MOUNT_KIND_LABEL
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : '概念定位失败'
+    });
+  }
+});
+
+app.post('/api/projects/:id/mounts', (req, res) => {
+  try {
+    const project = findProject(req.params.id);
+    const body = (req.body || {}) as Record<string, unknown>;
+    const mediaKind = (String(body.mediaKind || 'concept-card') as MediaKind) ?? 'concept-card';
+    const atSeconds = Math.max(0, Number(body.atSeconds) || 0);
+    let html = String(body.html || '');
+    let artifactId = typeof body.artifactId === 'string' ? body.artifactId : undefined;
+    let title = String(body.title || '').trim();
+    let description = String(body.description || '').trim();
+
+    if (body.generateCard) {
+      const db = readDb();
+      const artifact = createMediaArtifact(project, db.engines, {
+        kind: mediaKind,
+        title: title || undefined,
+        description: description || undefined,
+        triggerSeconds: atSeconds
+      });
+      project.artifacts = [artifact, ...(project.artifacts ?? [])];
+      html = artifact.html;
+      artifactId = artifact.id;
+      title = title || artifact.title;
+      description = description || artifact.description;
+    } else if (artifactId) {
+      const artifact = (project.artifacts ?? []).find((item) => item.id === artifactId);
+      if (artifact) {
+        html = artifact.html;
+        title = title || artifact.title;
+        description = description || artifact.description;
+      }
+    }
+
+    if (!html) {
+      res.status(400).json({ error: '挂载卡片需要内容，请先生成介质或选择已有介质' });
+      return;
+    }
+
+    const createdAt = new Date().toISOString();
+    const mount: CourseMount = {
+      id: makeId('mount'),
+      artifactId,
+      mediaKind,
+      title: title || '未命名卡片',
+      description,
+      html,
+      concept: String(body.concept || '').trim() || undefined,
+      atSeconds: Number(atSeconds.toFixed(2)),
+      endSeconds: Math.max(atSeconds + 4, Number(body.endSeconds) || atSeconds + 8),
+      placement: (String(body.placement || 'below') as MediaTriggerPlacement) ?? 'below',
+      source: artifactId ? 'artifact' : 'manual',
+      createdAt,
+      updatedAt: createdAt
+    };
+    project.mounts = [...(project.mounts ?? []), mount].sort(
+      (a, b) => a.atSeconds - b.atSeconds
+    );
+    persistProject(project);
+    res.json(project);
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : '挂载失败'
+    });
+  }
+});
+
+app.patch('/api/projects/:id/mounts/:mountId', (req, res) => {
+  try {
+    const project = findProject(req.params.id);
+    const body = (req.body || {}) as Record<string, unknown>;
+    let updated = false;
+    project.mounts = (project.mounts ?? []).map((mount) => {
+      if (mount.id !== req.params.mountId) return mount;
+      updated = true;
+      const atSeconds =
+        body.atSeconds !== undefined
+          ? Math.max(0, Number(body.atSeconds) || 0)
+          : mount.atSeconds;
+      return {
+        ...mount,
+        title: typeof body.title === 'string' ? body.title : mount.title,
+        description:
+          typeof body.description === 'string' ? body.description : mount.description,
+        concept: typeof body.concept === 'string' ? body.concept : mount.concept,
+        html: typeof body.html === 'string' ? body.html : mount.html,
+        placement:
+          typeof body.placement === 'string'
+            ? (body.placement as MediaTriggerPlacement)
+            : mount.placement,
+        atSeconds: Number(atSeconds.toFixed(2)),
+        endSeconds:
+          body.endSeconds !== undefined
+            ? Number(body.endSeconds)
+            : Math.max(atSeconds + 4, mount.endSeconds ?? atSeconds + 8),
+        updatedAt: new Date().toISOString()
+      };
+    });
+    if (!updated) {
+      res.status(404).json({ error: '挂载卡片不存在' });
+      return;
+    }
+    project.mounts.sort((a, b) => a.atSeconds - b.atSeconds);
+    persistProject(project);
+    res.json(project);
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : '更新挂载失败'
+    });
+  }
+});
+
+app.delete('/api/projects/:id/mounts/:mountId', (req, res) => {
+  try {
+    const project = findProject(req.params.id);
+    const before = (project.mounts ?? []).length;
+    project.mounts = (project.mounts ?? []).filter(
+      (mount) => mount.id !== req.params.mountId
+    );
+    if (project.mounts.length === before) {
+      res.status(404).json({ error: '挂载卡片不存在' });
+      return;
+    }
+    persistProject(project);
+    res.json(project);
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : '删除挂载失败'
+    });
+  }
+});
+
+app.post('/api/projects/:id/course-html', (req, res) => {
+  try {
+    const project = findProject(req.params.id);
+    const result = buildCourseHtml(project, project.mounts ?? []);
+    project.delivery = {
+      ...(project.delivery ?? { status: 'idle' }),
+      status: 'ready',
+      builtAt: new Date().toISOString(),
+      indexUrl: result.indexUrl,
+      indexPath: result.indexPath,
+      artifactCount: result.fileCount,
+      sizeBytes: result.sizeBytes
+    };
+    persistProject(project);
+    res.json({ ...result, project });
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : 'HTML 课程生成失败'
+    });
+  }
+});
+
 app.post('/api/projects/:id/actions', async (req, res) => {
   try {
     const project = findProject(req.params.id);
@@ -1050,7 +1277,15 @@ app.post('/api/projects/:id/actions', async (req, res) => {
       let slides: CourseSlide[];
       let generation: GenerationMeta;
       try {
-        const result = await generateSlidesWithModel(project.script, settings);
+        const engineVisualKinds = String(engine?.config.visualKinds || '')
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean);
+        const engineDensity = String(engine?.config.visualDensity || 'balanced');
+        const result = await generateSlidesWithModel(project.script, settings, {
+          visualKinds: engineVisualKinds,
+          density: engineDensity
+        });
         slides = result.slides;
         generation = result.meta;
       } catch (error) {

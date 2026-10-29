@@ -66,8 +66,28 @@ export const DEFAULT_ENGINES: ProductionEngine[] = [
     '当前默认课件链路，从已确认讲稿生成封面、概念页、对照页与收束页。',
     'agent-slides',
     ['slide-outline', 'slide-layout', 'visual-audit'],
-    { mode: 'model-first', layoutBias: 'balanced' },
+    {
+      mode: 'model-first',
+      layoutBias: 'balanced',
+      visualDensity: 'rich',
+      visualKinds: 'diagram,steps,chart,timeline,matrix'
+    },
     true
+  ),
+  engine(
+    'engine-slides-visual',
+    '图示课件引擎',
+    'slides',
+    'structure',
+    '每页都配结构图、流程图或数据图表，信息密度高，适合概念讲解与方法拆解。',
+    'agent-slides',
+    ['slide-outline', 'slide-layout', 'visual-audit'],
+    {
+      mode: 'model-first',
+      layoutBias: 'visual',
+      visualDensity: 'rich',
+      visualKinds: 'diagram,steps,cycle,timeline,chart,matrix'
+    }
   ),
   engine(
     'engine-slides-text',
@@ -77,7 +97,7 @@ export const DEFAULT_ENGINES: ProductionEngine[] = [
     '强化标题、要点与讲述提示，适合以文字信息为主的课程。',
     'agent-slides',
     ['slide-outline', 'slide-layout'],
-    { mode: 'model-first', layoutBias: 'text', maxBullets: 3 }
+    { mode: 'model-first', layoutBias: 'text', maxBullets: 3, visualDensity: 'clean' }
   ),
   engine(
     'engine-slides-structure',
@@ -87,7 +107,13 @@ export const DEFAULT_ENGINES: ProductionEngine[] = [
     '用对照、层级和结构图组织知识关系，适合概念辨析与方法拆解。',
     'agent-slides',
     ['slide-outline', 'slide-layout', 'visual-audit'],
-    { mode: 'model-first', layoutBias: 'structure', maxBullets: 4 }
+    {
+      mode: 'model-first',
+      layoutBias: 'structure',
+      maxBullets: 4,
+      visualDensity: 'rich',
+      visualKinds: 'diagram,matrix,cycle'
+    }
   ),
   engine(
     'engine-slides-image',
@@ -97,7 +123,13 @@ export const DEFAULT_ENGINES: ProductionEngine[] = [
     '将每页视觉任务整理为可生成的画面提示词；未配置视觉模型时使用视觉提示词模式。',
     'agent-slides',
     ['slide-outline', 'slide-layout', 'visual-audit'],
-    { mode: 'visual-brief', imageGeneration: false, layoutBias: 'visual' }
+    {
+      mode: 'visual-brief',
+      imageGeneration: false,
+      layoutBias: 'visual',
+      visualDensity: 'rich',
+      visualKinds: 'image,diagram'
+    }
   ),
   engine(
     'engine-audio-default',

@@ -5,7 +5,9 @@ import type {
   ScriptSection,
   ScriptSectionRole,
   SlideLayout,
-  SlideRole
+  SlideRole,
+  SlideTone,
+  SlideVisual
 } from '../src/types';
 
 export const INTRO_SECTION_ID = 'intro';
@@ -163,6 +165,30 @@ const accents: CourseSlide['accent'][] = ['brick', 'teal', 'gold', 'ink'];
  * 课件结构规整：封面 → 学习目标 → 正文页 → 总结页，
  * 每页绑定唯一一段讲稿，页面顺序与讲稿顺序严格一致。
  */
+/**
+ * Local fallback visual: turns the page bullets into a small relationship
+ * diagram so a deck stays picture-led even without a model in the loop.
+ */
+const fallbackVisual = (
+  bullets: string[],
+  role: SlideRole,
+  purpose?: string
+): SlideVisual | undefined => {
+  if (role === 'cover' || role === 'objectives') return undefined;
+  const items = [...bullets.filter(Boolean), ...(purpose ? [purpose] : [])].slice(0, 4);
+  if (items.length < 2) return undefined;
+  return {
+    kind: 'diagram',
+    source: 'template',
+    caption: '要点关系',
+    nodes: items.map((label, index) => ({
+      label: label.slice(0, 18),
+      tone: (index % 2 === 0 ? 'brick' : 'teal') as SlideTone
+    })),
+    links: items.slice(1).map((_, index) => ({ from: index, to: index + 1 }))
+  };
+};
+
 export function reconcileSlides(
   slides: CourseSlide[],
   script: CourseScript,
@@ -200,14 +226,20 @@ export function reconcileSlides(
     const source =
       bySectionId.get(section.id) ??
       (role === 'cover' ? cover : role === 'objectives' ? objectiveSlide : role === 'summary' ? summary : undefined);
+    const briefBullets = section.slideBrief
+      .split(/[；。]/)
+      .flatMap((item) => (item.includes('，') ? item.split('，') : [item]))
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .slice(0, 3);
+    // A single inherited bullet makes a thin page, so prefer the section brief.
+    const inherited = source?.bullets ?? [];
     const bullets =
-      source?.bullets?.length
-        ? source.bullets
-        : section.slideBrief
-            .split(/[；。]/)
-            .map((item) => item.trim())
-            .filter(Boolean)
-            .slice(0, 3);
+      inherited.length >= 2
+        ? inherited
+        : briefBullets.length
+          ? briefBullets
+          : inherited;
     const layout =
       role === 'cover'
         ? 'cover'
@@ -231,6 +263,13 @@ export function reconcileSlides(
               : `PART ${String(section.order).padStart(2, '0')} / ${String(script.sections.length).padStart(2, '0')}`,
       layout,
       bullets,
+      keyPoint:
+        source?.keyPoint ?? (role === 'content' ? section.purpose : undefined),
+      supporting: source?.supporting,
+      ask: source?.ask,
+      takeaway:
+        source?.takeaway ?? (role === 'summary' ? script.summary : undefined),
+      visual: source?.visual ?? fallbackVisual(bullets, role, section.purpose),
       note: source?.note ?? section.purpose,
       accent:
         source?.accent ??

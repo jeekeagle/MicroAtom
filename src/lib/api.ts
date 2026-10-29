@@ -5,6 +5,7 @@ import type {
   AnalyzeBriefResult,
   BootstrapData,
   Capabilities,
+  ConceptAnchor,
   CourseProject,
   CreateProjectInput,
   DeliveryBundle,
@@ -449,6 +450,73 @@ export const api = {
     }
     return response.json() as Promise<{ text: string; durationMs: number; model: string }>;
   },
+
+  suggestComposer: (projectId: string) =>
+    request<{
+      anchors: ConceptAnchor[];
+      source: 'model' | 'local-fallback';
+      warning: string;
+      artifacts: MediaArtifact[];
+      labels: Record<MediaKind, string>;
+    }>(`/api/projects/${projectId}/composer/suggest`, {
+      method: 'POST',
+      body: JSON.stringify({})
+    }),
+
+  createMount: (
+    projectId: string,
+    payload: {
+      mediaKind: MediaKind;
+      title?: string;
+      description?: string;
+      atSeconds: number;
+      concept?: string;
+      endSeconds?: number;
+      artifactId?: string;
+      html?: string;
+      placement?: MediaTriggerPlacement;
+      generateCard?: boolean;
+    }
+  ) =>
+    request<CourseProject>(`/api/projects/${projectId}/mounts`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+
+  updateMount: (
+    projectId: string,
+    mountId: string,
+    payload: Partial<{
+      title: string;
+      description: string;
+      concept: string;
+      html: string;
+      atSeconds: number;
+      endSeconds: number;
+      placement: MediaTriggerPlacement;
+    }>
+  ) =>
+    request<CourseProject>(`/api/projects/${projectId}/mounts/${mountId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload)
+    }),
+
+  deleteMount: (projectId: string, mountId: string) =>
+    request<CourseProject>(`/api/projects/${projectId}/mounts/${mountId}`, {
+      method: 'DELETE'
+    }),
+
+  buildCourseHtml: (projectId: string) =>
+    request<{
+      indexUrl: string;
+      fileCount: number;
+      sizeBytes: number;
+      durationSeconds: number;
+      project: CourseProject;
+    }>(`/api/projects/${projectId}/course-html`, {
+      method: 'POST',
+      body: JSON.stringify({})
+    }),
 
   resetSystem: () =>
     request<{ ok: boolean }>('/api/system/reset', {

@@ -119,7 +119,62 @@ export interface ProductionEngine {
   updatedAt: string;
 }
 
-export type SlideLayout = 'cover' | 'objectives' | 'statement' | 'concept' | 'compare' | 'quote' | 'summary';
+export type SlideLayout =
+  | 'cover'
+  | 'objectives'
+  | 'statement'
+  | 'concept'
+  | 'compare'
+  | 'quote'
+  | 'summary'
+  | 'split'
+  | 'steps'
+  | 'case';
+
+export type SlideVisualKind =
+  | 'none'
+  | 'diagram'
+  | 'steps'
+  | 'chart'
+  | 'cycle'
+  | 'timeline'
+  | 'matrix'
+  | 'image';
+
+export type SlideTone = 'brick' | 'teal' | 'gold' | 'ink';
+
+export interface SlideVisualNode {
+  label: string;
+  detail?: string;
+  tone?: SlideTone;
+}
+
+export interface SlideVisualLink {
+  from: number;
+  to: number;
+  label?: string;
+}
+
+export interface SlideVisualSeries {
+  label: string;
+  value: number;
+  note?: string;
+}
+
+export interface SlideVisual {
+  kind: SlideVisualKind;
+  title?: string;
+  caption?: string;
+  nodes?: SlideVisualNode[];
+  links?: SlideVisualLink[];
+  series?: SlideVisualSeries[];
+  steps?: Array<{ label: string; detail?: string }>;
+  columns?: string[];
+  rows?: Array<{ cells: string[]; highlight?: number }>;
+  imageUrl?: string;
+  imagePrompt?: string;
+  source?: 'model' | 'template' | 'engine';
+}
 
 export type SlideRole = 'cover' | 'objectives' | 'content' | 'summary';
 
@@ -131,6 +186,11 @@ export interface CourseSlide {
   eyebrow: string;
   layout: SlideLayout;
   bullets: string[];
+  keyPoint?: string;
+  supporting?: string[];
+  ask?: string;
+  takeaway?: string;
+  visual?: SlideVisual;
   note: string;
   accent: 'brick' | 'teal' | 'gold' | 'ink';
   sectionId: string;
@@ -218,6 +278,35 @@ export interface MediaArtifact {
   updatedAt: string;
 }
 
+/**
+ * A card pinned to a moment in the course. The composer aligns these to the
+ * audio and transcript tracks, then bakes them into the HTML course.
+ */
+export interface CourseMount {
+  id: string;
+  artifactId?: string;
+  mediaKind: MediaKind;
+  title: string;
+  description: string;
+  html: string;
+  concept?: string;
+  atSeconds: number;
+  endSeconds?: number;
+  placement: MediaTriggerPlacement;
+  source: 'agent' | 'manual' | 'artifact';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ConceptAnchor {
+  concept: string;
+  atSeconds: number;
+  endSeconds: number;
+  segmentIndex: number;
+  note: string;
+  kind: MediaKind;
+}
+
 export interface DeliveryCue {
   artifactId: string;
   kind: MediaKind;
@@ -289,6 +378,7 @@ export interface CourseProject {
   render?: RenderJob;
   timeline?: CourseTimeline;
   artifacts: MediaArtifact[];
+  mounts?: CourseMount[];
   delivery?: DeliveryBundle;
   selectedEngines?: Partial<Record<ProductionStage, string>>;
   generation?: ProjectGenerationMeta;
@@ -477,6 +567,7 @@ export interface AnalyzeBriefResult {
   source: 'model' | 'local-fallback';
   engineId?: string;
   engineName?: string;
+  fields?: string[];
 }
 
 export interface ScriptGenerationInput {

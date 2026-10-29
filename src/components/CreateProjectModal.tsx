@@ -135,6 +135,7 @@ export function CreateProjectModal() {
     engineName?: string;
     warnings: string[];
   } | null>(null);
+  const [analyzedFields, setAnalyzedFields] = useState<string[]>([]);
   const [speechSupported, setSpeechSupported] = useState(true);
 
   const recognizerRef = useRef<SpeechRecognizer | null>(null);
@@ -203,6 +204,7 @@ export function CreateProjectModal() {
       setElapsed(0);
       setPhase('idle');
       setAnalysis(null);
+      setAnalyzedFields([]);
       setStep(1);
       setForm(buildInitialForm(memory));
     } else {
@@ -238,7 +240,7 @@ export function CreateProjectModal() {
     try {
       const result = await api.analyzeBrief({
         transcript: content,
-        current: { mode: form.mode }
+        current: { ...form }
       });
       setForm((current) => ({ ...current, ...result.draft }));
       setAnalysis({
@@ -246,6 +248,7 @@ export function CreateProjectModal() {
         engineName: result.engineName,
         warnings: result.warnings
       });
+      setAnalyzedFields(result.fields ?? []);
       setPhase('done');
       setStep(2);
       showToast(
@@ -400,11 +403,22 @@ export function CreateProjectModal() {
     }
   };
 
+  const fieldLabel = (label: string, key: string) => (
+    <span>
+      {label}
+      {analyzedFields.includes(key) && <em className="field-source">智能体</em>}
+    </span>
+  );
+
   const manualAnalyze = () => {
     const text = (transcript || `${finalRef.current}${interim}`).trim();
-    if (!text) {
-      showToast('请先输入一段课程设想', 'error');
+    if (!text && !form.topic.trim()) {
+      showToast('请先输入一段课程设想，或写下课程主题', 'error');
       return;
+    }
+    if (!text) {
+      setTranscript('');
+      transcriptRef.current = '';
     }
     setTranscript(text);
     transcriptRef.current = text;
@@ -523,10 +537,10 @@ export function CreateProjectModal() {
                   )
                 }
                 loading={phase === 'analyzing'}
-                disabled={!transcript.trim() || phase === 'recording'}
+                disabled={(!transcript.trim() && !form.topic.trim()) || phase === 'recording'}
                 onClick={manualAnalyze}
               >
-                用智能体整理
+                智能体分析并填写字段
               </Button>
             </div>
 
@@ -594,8 +608,19 @@ export function CreateProjectModal() {
             <Button variant="ghost" onClick={() => setCreateProjectOpen(false)}>
               取消
             </Button>
-            <Button variant="primary" onClick={() => setStep(2)} icon={<ArrowRight size={16} />}>
-              继续
+            <Button
+              variant="primary"
+              onClick={() => {
+                if (!analysis) {
+                  showToast('先让智能体分析一次，再确认教学意图', 'error');
+                  manualAnalyze();
+                  return;
+                }
+                setStep(2);
+              }}
+              icon={<ArrowRight size={16} />}
+            >
+              {analysis ? '查看智能体结果' : '先分析再继续'}
             </Button>
           </div>
         </div>
@@ -623,11 +648,11 @@ export function CreateProjectModal() {
 
           <div className="form-grid two">
             <label className="field">
-              <span>课程主题</span>
+              {fieldLabel('课程主题', 'topic')}
               <input value={form.topic} onChange={(event) => set('topic', event.target.value)} />
             </label>
             <label className="field">
-              <span>课程名称</span>
+              {fieldLabel('课程名称', 'title')}
               <input
                 value={form.title}
                 onChange={(event) => set('title', event.target.value)}
@@ -637,7 +662,7 @@ export function CreateProjectModal() {
           </div>
           <div className="form-grid three">
             <label className="field">
-              <span>学科</span>
+              {fieldLabel('学科', 'subject')}
               <input
                 value={form.subject}
                 onChange={(event) => set('subject', event.target.value)}
@@ -645,7 +670,7 @@ export function CreateProjectModal() {
               />
             </label>
             <label className="field">
-              <span>学段</span>
+              {fieldLabel('学段', 'grade')}
               <input
                 value={form.grade}
                 onChange={(event) => set('grade', event.target.value)}
@@ -669,7 +694,7 @@ export function CreateProjectModal() {
             </label>
           </div>
           <label className="field">
-            <span>想法草稿</span>
+            {fieldLabel('想法草稿', 'idea')}
             <textarea
               rows={4}
               value={form.idea}
@@ -679,7 +704,7 @@ export function CreateProjectModal() {
           </label>
           <div className="form-grid two">
             <label className="field">
-              <span>价值引领</span>
+              {fieldLabel('价值引领', 'valueGuide')}
               <textarea
                 rows={3}
                 value={form.valueGuide}
@@ -688,7 +713,7 @@ export function CreateProjectModal() {
               />
             </label>
             <label className="field">
-              <span>学情</span>
+              {fieldLabel('学情', 'learnerProfile')}
               <textarea
                 rows={3}
                 value={form.learnerProfile}

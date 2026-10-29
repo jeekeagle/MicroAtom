@@ -10,6 +10,9 @@ import type {
   ScriptSectionRole,
   SlideLayout,
   SlideRole,
+  SlideTone,
+  SlideVisual,
+  SlideVisualKind,
   TeacherMemory,
   ValueDimension
 } from '../src/types';
@@ -259,11 +262,27 @@ const layouts: SlideLayout[] = [
   'concept',
   'compare',
   'quote',
-  'summary'
+  'summary',
+  'split',
+  'steps',
+  'case'
 ];
+const visualKinds: SlideVisualKind[] = [
+  'diagram',
+  'steps',
+  'chart',
+  'cycle',
+  'timeline',
+  'matrix',
+  'image'
+];
+const visualTones: SlideTone[] = ['brick', 'teal', 'gold', 'ink'];
 const accents: CourseSlide['accent'][] = ['brick', 'teal', 'gold', 'ink'];
 
-export function buildSlideMessages(script: CourseScript) {
+export function buildSlideMessages(
+  script: CourseScript,
+  options: { visualKinds?: string[]; density?: string } = {}
+) {
   const sectionText = script.sections
     .map(
       (section) =>
@@ -290,21 +309,157 @@ export function buildSlideMessages(script: CourseScript) {
 讲稿段落：
 ${sectionText}
 
+${options.visualKinds?.length ? `本套课件优先使用这些视觉类型：${options.visualKinds.join('、')}。` : ''}
+${options.density === 'rich' ? '信息密度要求高：bullets 给 3 条，supporting 给 2 条，除封面与收束页外每页都必须有 visual。' : ''}
+${options.density === 'clean' ? '信息密度要求低：bullets 最多 2 条，supporting 最多 1 条，页面保持简洁，visual 可选。' : ''}
+
 要求：
 1. 讲稿与页面必须一一对应，段落顺序就是页面顺序，不能多页也不能少页。
 2. 第一页对应 role=intro 的段落，layout=cover，只放标题与一句核心主张。
 3. 第二页对应 role=objectives 的段落，layout=objectives，最多 4 条学习目标。
-4. 中间页对应 role=body 的段落，layout 取 statement / concept / compare，sectionId 等于该段 id。
+4. 中间页对应 role=body 的段落，layout 取 statement / concept / compare / split / steps / case，sectionId 等于该段 id。
 5. 最后一页对应 role=close 的段落，layout=summary，sectionId 等于该段 id。
-6. layout 只能取：cover, objectives, statement, concept, compare, quote, summary。
+6. layout 只能取：cover, objectives, statement, concept, compare, quote, summary, split, steps, case。
 7. accent 只能取：brick, teal, gold, ink。
 8. seconds 为正整数，与对应段落的口播时长相当；封面与目标页不要短于口播时长。
-9. bullets 每页 1-3 条，短句；note 写给教师或渲染器的提示。
+9. 文字分层，让课堂课件信息量足够：
+   - title 用结论式短句（不超过 20 字），不要写成名词短语；
+   - keyPoint 一句主结论（20-38 字）；
+   - bullets 2-3 条关键要点，每条不超过 24 字；
+   - supporting 0-2 条补充说明，每条不超过 30 字；
+   - ask 一句课堂提问，可为空字符串；
+   - takeaway 一句"一句话带走"，可为空字符串。
+10. 视觉层：除封面与收束页外，每页都必须给出 visual，图文并茂是课堂课件的基本要求。
+   - visual.kind 只能取：diagram, steps, chart, cycle, timeline, matrix, image；
+   - diagram：nodes 2-5 个，每个 {label, detail, tone}，tone 取 brick/teal/gold/ink；links 用 {from,to,label} 描述关系，from 与 to 是 nodes 的下标；
+   - steps：3-4 步，每步 {label, detail}；
+   - chart：series 2-5 项，每项 {label, value, note}，value 必须是数字；
+   - cycle：nodes 3-4 个，表示闭环环节；
+   - timeline：nodes 2-5 个，按时间或流程先后排列；
+   - matrix：columns 2-4 列，rows 2-4 行，每行 {cells, highlight}，cells 的数量与 columns 一致，highlight 是重点列的下标；
+   - image：只写 imagePrompt 描述插图画面，不要编造图片链接。
+11. 视觉必须服务于本段讲稿，不要为了好看而编造数据；note 写给教师或渲染器的提示。
 
-只输出 JSON：{"slides":[{"id":"slide-intro","order":1,"title":"...","eyebrow":"MICRO COURSE / 微课","layout":"cover","bullets":["..."],"note":"...","accent":"brick","sectionId":"intro","seconds":20}]}`
+只输出 JSON：{"slides":[{"id":"slide-intro","order":1,"title":"...","eyebrow":"MICRO COURSE / 微课","layout":"cover","keyPoint":"...","bullets":["..."],"supporting":["..."],"ask":"...","takeaway":"...","visual":{"kind":"diagram","title":"...","caption":"...","nodes":[{"label":"...","detail":"...","tone":"brick"}],"links":[{"from":0,"to":1,"label":"..."}]},"note":"...","accent":"brick","sectionId":"intro","seconds":20}]}`
     }
   ];
 }
+
+﻿const normalizeVisual = (raw: unknown): SlideVisual | undefined => {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const source = raw as Record<string, unknown>;
+  const kind = visualKinds.includes(source.kind as SlideVisualKind)
+    ? (source.kind as SlideVisualKind)
+    : undefined;
+  if (!kind) return undefined;
+  const visual: SlideVisual = { kind, source: 'model' };
+  const title = text(source.title).slice(0, 40);
+  if (title) visual.title = title;
+  const caption = text(source.caption).slice(0, 60);
+  if (caption) visual.caption = caption;
+
+  if (kind === 'diagram' || kind === 'cycle' || kind === 'timeline') {
+    const nodes = Array.isArray(source.nodes)
+      ? source.nodes
+          .slice(0, 6)
+          .map((item) => {
+            const node = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>;
+            const tone = visualTones.includes(node.tone as SlideTone)
+              ? (node.tone as SlideTone)
+              : undefined;
+            return {
+              label: text(node.label).slice(0, 18),
+              detail: text(node.detail).slice(0, 34),
+              ...(tone ? { tone } : {})
+            };
+          })
+          .filter((node) => node.label)
+      : [];
+    if (nodes.length >= 2) visual.nodes = nodes;
+  }
+
+  if (kind === 'diagram' && Array.isArray(source.links)) {
+    const nodeCount = visual.nodes?.length ?? 0;
+    const links = source.links
+      .slice(0, 10)
+      .map((item) => {
+        const link = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>;
+        const from = Math.round(Number(link.from));
+        const to = Math.round(Number(link.to));
+        if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
+        if (from < 0 || to < 0 || from >= nodeCount || to >= nodeCount || from === to) return null;
+        const label = text(link.label).slice(0, 12);
+        return { from, to, ...(label ? { label } : {}) };
+      })
+      .filter((link): link is { from: number; to: number; label?: string } => Boolean(link));
+    if (links.length) visual.links = links;
+  }
+
+  if (kind === 'steps' && Array.isArray(source.steps)) {
+    const steps = source.steps
+      .slice(0, 5)
+      .map((item) => {
+        const step = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>;
+        return {
+          label: text(step.label).slice(0, 20),
+          detail: text(step.detail).slice(0, 32)
+        };
+      })
+      .filter((step) => step.label);
+    if (steps.length >= 2) visual.steps = steps;
+  }
+
+  if (kind === 'chart' && Array.isArray(source.series)) {
+    const series = source.series
+      .slice(0, 6)
+      .map((item) => {
+        const entry = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>;
+        const value = Number(entry.value);
+        return {
+          label: text(entry.label).slice(0, 14),
+          value: Number.isFinite(value) ? value : 0,
+          note: text(entry.note).slice(0, 26)
+        };
+      })
+      .filter((entry) => entry.label);
+    if (series.length >= 2) visual.series = series;
+  }
+
+  if (kind === 'matrix') {
+    const columns = strings(source.columns, 4).map((column) => column.slice(0, 12));
+    const rows = Array.isArray(source.rows)
+      ? source.rows
+          .slice(0, 5)
+          .map((item) => {
+            const row = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>;
+            const cells = strings(row.cells, 4).map((cell) => cell.slice(0, 26));
+            if (!cells.length) return null;
+            const highlight = Math.round(Number(row.highlight));
+            return {
+              cells,
+              ...(Number.isFinite(highlight) && highlight >= 0 && highlight < cells.length
+                ? { highlight }
+                : {})
+            };
+          })
+          .filter((row): row is { cells: string[]; highlight?: number } => Boolean(row))
+      : [];
+    if (columns.length >= 2 && rows.length) {
+      visual.columns = columns;
+      visual.rows = rows;
+    }
+  }
+
+  if (kind === 'image') {
+    const prompt = text(source.imagePrompt).slice(0, 160);
+    const url = text(source.imageUrl).slice(0, 400);
+    if (prompt) visual.imagePrompt = prompt;
+    if (url) visual.imageUrl = url;
+    if (!prompt && !url) return undefined;
+  }
+
+  return visual;
+};
 
 export function normalizeSlides(raw: unknown, script: CourseScript): CourseSlide[] {
   const source =
@@ -331,20 +486,31 @@ export function normalizeSlides(raw: unknown, script: CourseScript): CourseSlide
       const requestedSection = text(slide.sectionId);
       const fallbackSection =
         script.sections[Math.min(index, script.sections.length - 1)]?.id ?? script.sections[0].id;
-      return {
+      const normalized: Omit<CourseSlide, 'role'> = {
         id,
         order: index + 1,
         title: text(slide.title, `第 ${index + 1} 页`).slice(0, 48),
         eyebrow: text(slide.eyebrow, `PART ${String(index + 1).padStart(2, '0')}`).slice(0, 40),
         layout,
         bullets: strings(slide.bullets, 4).map((bullet) => bullet.slice(0, 60)),
+        keyPoint: text(slide.keyPoint).slice(0, 60),
+        supporting: strings(slide.supporting, 3).map((item) => item.slice(0, 40)),
+        ask: text(slide.ask).slice(0, 60),
+        takeaway: text(slide.takeaway).slice(0, 60),
+        visual: normalizeVisual(slide.visual),
         note: text(slide.note, ''),
         accent: accents.includes(slide.accent as CourseSlide['accent'])
           ? (slide.accent as CourseSlide['accent'])
           : accents[index % accents.length],
         sectionId: sectionIds.has(requestedSection) ? requestedSection : fallbackSection,
         seconds: clamp(Math.round(number(slide.seconds, 60)), 2, 300)
-      } satisfies Omit<CourseSlide, 'role'>;
+      };
+      if (!normalized.keyPoint) delete normalized.keyPoint;
+      if (!normalized.supporting?.length) delete normalized.supporting;
+      if (!normalized.ask) delete normalized.ask;
+      if (!normalized.takeaway) delete normalized.takeaway;
+      if (!normalized.visual) delete normalized.visual;
+      return normalized;
     })
     .filter((slide) => slide.title && slide.bullets.length);
 
@@ -437,11 +603,12 @@ export function normalizeSlides(raw: unknown, script: CourseScript): CourseSlide
 
 export async function generateSlidesWithModel(
   script: CourseScript,
-  settings: RuntimeSettings
+  settings: RuntimeSettings,
+  options: { visualKinds?: string[]; density?: string } = {}
 ): Promise<{ slides: CourseSlide[]; meta: GenerationMeta }> {
   const startedAt = Date.now();
   const response = await callModel(settings, {
-    messages: buildSlideMessages(script),
+    messages: buildSlideMessages(script, options),
     json: true,
     temperature: 0.6,
     maxTokens: 4200

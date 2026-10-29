@@ -18,6 +18,7 @@ import { formatDuration, sectionRoleLabel } from '../../lib/format';
 import type { CourseSlide, SlideLayout } from '../../types';
 import { Button } from '../ui';
 import { SlideCanvas } from '../SlideCanvas';
+import { SlideVisualEditor } from './SlideVisualEditor';
 import type { StageProps } from './types';
 
 const layouts: Array<{ value: SlideLayout; label: string }> = [
@@ -27,7 +28,10 @@ const layouts: Array<{ value: SlideLayout; label: string }> = [
   { value: 'concept', label: '概念' },
   { value: 'compare', label: '对照' },
   { value: 'quote', label: '引语 / 收束' },
-  { value: 'summary', label: '总结' }
+  { value: 'summary', label: '总结' },
+  { value: 'split', label: '图文分栏' },
+  { value: 'steps', label: '流程步骤' },
+  { value: 'case', label: '案例页' }
 ];
 
 const accents: Array<{ value: CourseSlide['accent']; label: string }> = [
@@ -39,7 +43,19 @@ const accents: Array<{ value: CourseSlide['accent']; label: string }> = [
 
 const cloneSlide = (slide: CourseSlide): CourseSlide => ({
   ...slide,
-  bullets: [...slide.bullets]
+  bullets: [...slide.bullets],
+  supporting: slide.supporting ? [...slide.supporting] : undefined,
+  visual: slide.visual
+    ? {
+        ...slide.visual,
+        nodes: slide.visual.nodes?.map((node) => ({ ...node })),
+        links: slide.visual.links?.map((link) => ({ ...link })),
+        series: slide.visual.series?.map((item) => ({ ...item })),
+        steps: slide.visual.steps?.map((step) => ({ ...step })),
+        columns: slide.visual.columns ? [...slide.visual.columns] : undefined,
+        rows: slide.visual.rows?.map((row) => ({ ...row, cells: [...row.cells] }))
+      }
+    : undefined
 });
 
 export function SlidesStage({ project, onProject, notify, onStage }: StageProps) {
@@ -112,6 +128,11 @@ export function SlidesStage({ project, onProject, notify, onStage }: StageProps)
         eyebrow: slideDraft.eyebrow,
         layout: slideDraft.layout,
         bullets: slideDraft.bullets,
+        keyPoint: slideDraft.keyPoint ?? '',
+        supporting: slideDraft.supporting ?? [],
+        ask: slideDraft.ask ?? '',
+        takeaway: slideDraft.takeaway ?? '',
+        visual: slideDraft.visual,
         note: slideDraft.note,
         accent: slideDraft.accent,
         seconds: slideDraft.seconds
@@ -382,6 +403,17 @@ export function SlidesStage({ project, onProject, notify, onStage }: StageProps)
                   </label>
                   <label className="field">
                     <span>
+                      主结论
+                      <small>一句话说清这页要立住的观点</small>
+                    </span>
+                    <input
+                      value={slideDraft.keyPoint ?? ''}
+                      placeholder="例如：模型的价值取决于我们对边界的判断"
+                      onChange={(event) => updateDraft('keyPoint', event.target.value)}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>
                       页面要点
                       <small>每行一个，建议不超过 3 行</small>
                     </span>
@@ -431,6 +463,41 @@ export function SlidesStage({ project, onProject, notify, onStage }: StageProps)
                     </div>
                   </label>
                   <label className="field">
+                    <span>
+                      补充说明
+                      <small>每行一条，课堂信息更完整</small>
+                    </span>
+                    <textarea
+                      rows={3}
+                      value={(slideDraft.supporting ?? []).join('\n')}
+                      onChange={(event) =>
+                        updateDraft(
+                          'supporting',
+                          event.target.value
+                            .split('\n')
+                            .map((line) => line.trim())
+                            .filter(Boolean)
+                        )
+                      }
+                    />
+                  </label>
+                  <label className="field">
+                    <span>课堂提问</span>
+                    <input
+                      value={slideDraft.ask ?? ''}
+                      placeholder="例如：你能用这个标准判断一个陌生案例吗？"
+                      onChange={(event) => updateDraft('ask', event.target.value)}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>一句话带走</span>
+                    <input
+                      value={slideDraft.takeaway ?? ''}
+                      placeholder="例如：先找结构，再找证据"
+                      onChange={(event) => updateDraft('takeaway', event.target.value)}
+                    />
+                  </label>
+                  <label className="field">
                     <span>讲述备注</span>
                     <textarea
                       rows={4}
@@ -440,6 +507,10 @@ export function SlidesStage({ project, onProject, notify, onStage }: StageProps)
                   </label>
                 </div>
               </div>
+              <SlideVisualEditor
+                visual={slideDraft.visual}
+                onChange={(visual) => updateDraft('visual', visual)}
+              />
               <div className="slide-properties-actions">
                 <span>
                   <Check size={14} />
