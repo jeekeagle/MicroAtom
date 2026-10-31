@@ -1,9 +1,10 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
   [string]$OutputRoot,
   [string]$PythonVersion = '3.12.10',
   [switch]$SkipBuild,
-  [switch]$SkipZip
+  [switch]$SkipZip,
+  [switch]$SkipDataBackup
 )
 
 $ErrorActionPreference = 'Stop'
@@ -122,13 +123,16 @@ if (-not (Test-Path -LiteralPath $ffmpeg) -or -not (Test-Path -LiteralPath $ffpr
 Copy-Item -LiteralPath $ffmpeg, $ffprobe -Destination $runtimeFfmpeg -Force
 
 Write-Host '[7/8] Copying launchers and documentation...'
-foreach ($file in @('start-kexu.cmd', 'kexu.cmd', 'check-env.cmd', 'backup-data.cmd')) {
+foreach ($file in @('start-kexu.cmd', 'kexu.cmd', 'check-env.cmd', 'backup-data.cmd', '一键安装.cmd', '一键启动.cmd', '停止服务.cmd')) {
   Copy-Item -LiteralPath (Join-Path $workspace "packaging\win\$file") -Destination $stage -Force
 }
 Get-ChildItem -LiteralPath (Join-Path $workspace 'packaging\win\scripts') -File |
   ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $scripts -Force }
 Copy-Item -LiteralPath (Join-Path $workspace 'packaging\win\config\kexu.env.example.cmd') -Destination $config -Force
 Copy-Item -LiteralPath (Join-Path $workspace 'README.md') -Destination $stage -Force
+foreach ($file in @('安装说明.md', '使用说明.md')) {
+  Copy-Item -LiteralPath (Join-Path $workspace "packaging\win\$file") -Destination $stage -Force
+}
 Get-ChildItem -LiteralPath (Join-Path $workspace 'docs') -File |
   ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $docs -Force }
 
@@ -165,6 +169,13 @@ $requiredFiles = @(
   'kexu.cmd',
   'check-env.cmd',
   'backup-data.cmd',
+  '一键安装.cmd',
+  '一键启动.cmd',
+  '停止服务.cmd',
+  '安装说明.md',
+  '使用说明.md',
+  'scripts\install.ps1',
+  'scripts\stop.ps1',
   'README.md',
   'BUILD-INFO.txt',
   'scripts\set-env.cmd',
@@ -197,30 +208,37 @@ if (-not $SkipZip) {
   Compress-Archive -LiteralPath $stage -DestinationPath $zipPath -CompressionLevel Optimal
 }
 
-$dataStage = Join-Path $OutputRoot '.data-backup-stage'
-if (Test-Path -LiteralPath $dataStage) {
+$dataZip = $null
+if (-not $SkipDataBackup) {
+  $dataStage = Join-Path $OutputRoot '.data-backup-stage'
+  if (Test-Path -LiteralPath $dataStage) {
+    $resolvedDataStage = [IO.Path]::GetFullPath($dataStage)
+    if ($resolvedDataStage.StartsWith($resolvedOutput, [StringComparison]::OrdinalIgnoreCase)) {
+      Remove-Item -LiteralPath $resolvedDataStage -Recurse -Force
+    }
+  }
+  $dataStageData = Join-Path $dataStage 'data'
+  New-Item -ItemType Directory -Force -Path $dataStageData | Out-Null
+  Get-ChildItem -LiteralPath (Join-Path $workspace 'data') -Force | Where-Object {
+    $dataExcluded -notcontains $_.Name
+  } | ForEach-Object {
+    Copy-Item -LiteralPath $_.FullName -Destination $dataStageData -Recurse -Force
+  }
+  $dataZip = Join-Path $OutputRoot "kexu-data-backup-$stamp.zip"
+  if (Test-Path -LiteralPath $dataZip) { Remove-Item -LiteralPath $dataZip -Force }
+  Compress-Archive -LiteralPath $dataStageData -DestinationPath $dataZip -CompressionLevel Optimal
   $resolvedDataStage = [IO.Path]::GetFullPath($dataStage)
   if ($resolvedDataStage.StartsWith($resolvedOutput, [StringComparison]::OrdinalIgnoreCase)) {
     Remove-Item -LiteralPath $resolvedDataStage -Recurse -Force
   }
-}
-$dataStageData = Join-Path $dataStage 'data'
-New-Item -ItemType Directory -Force -Path $dataStageData | Out-Null
-Get-ChildItem -LiteralPath (Join-Path $workspace 'data') -Force | Where-Object {
-  $dataExcluded -notcontains $_.Name
-} | ForEach-Object {
-  Copy-Item -LiteralPath $_.FullName -Destination $dataStageData -Recurse -Force
-}
-$dataZip = Join-Path $OutputRoot "kexu-data-backup-$stamp.zip"
-if (Test-Path -LiteralPath $dataZip) { Remove-Item -LiteralPath $dataZip -Force }
-Compress-Archive -LiteralPath $dataStageData -DestinationPath $dataZip -CompressionLevel Optimal
-$resolvedDataStage = [IO.Path]::GetFullPath($dataStage)
-if ($resolvedDataStage.StartsWith($resolvedOutput, [StringComparison]::OrdinalIgnoreCase)) {
-  Remove-Item -LiteralPath $resolvedDataStage -Recurse -Force
+
+
 }
 
 $checksums = @()
-foreach ($file in @($zipPath, $dataZip)) {
+$archiveFiles = @($zipPath)
+if ($dataZip) { $archiveFiles += $dataZip }
+foreach ($file in $archiveFiles) {
   if (Test-Path -LiteralPath $file) {
     $hash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash
     $checksums += "$hash  $([IO.Path]::GetFileName($file))"
@@ -232,5 +250,5 @@ $checksumPath = Join-Path $OutputRoot "SHA256SUMS.txt"
 Write-Host ''
 Write-Host "[OK] Portable directory: $stage"
 if (-not $SkipZip) { Write-Host "[OK] Portable ZIP: $zipPath" }
-Write-Host "[OK] Data backup: $dataZip"
+if ($dataZip) { Write-Host "[OK] Data backup: $dataZip" } else { Write-Host "[OK] Data backup skipped (-SkipDataBackup)." }
 Write-Host "[OK] Checksums: $checksumPath"
