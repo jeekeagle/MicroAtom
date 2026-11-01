@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>课序产品介绍页 · 六个候选</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#f0efec;font-family:"Microsoft YaHei UI",sans-serif;padding:40px 32px 60px;color:#1a1512}
+h1{font-size:24px;margin-bottom:6px}
+.sub{color:#6b6357;font-size:14px;margin-bottom:28px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;max-width:1320px;margin:0 auto}
+.cell{border:2px solid #1a1512;background:#fff;overflow:hidden;display:flex;flex-direction:column}
+.mini{height:190px;position:relative;overflow:hidden;border-bottom:2px solid #1a1512}
+.meta{padding:12px 14px 14px}
+.meta b{display:block;font-size:15px}
+.meta small{display:block;color:#6b6357;font-size:12.5px;margin-top:4px;line-height:1.55}
+.pick{display:inline-block;margin-top:8px;font:700 11px "Cascadia Mono",monospace;letter-spacing:.1em;background:#c0512f;color:#fff;padding:3px 9px}
+.bak{background:#8a8378}
+
+/* mini 1: dark timeline studio */
+.m1{background:#14110f;color:#ede6dc}
+.m1 .top{height:16px;border-bottom:1px solid #332c26;display:flex;align-items:center;gap:4px;padding:0 8px}
+.m1 .top i{width:5px;height:5px;border-radius:50%;background:#332c26;display:block}
+.m1 .top i:first-child{background:#c0512f}
+.m1 .h{font-size:17px;font-weight:700;padding:14px 14px 6px;line-height:1.3}
+.m1 .h em{font-style:normal;color:#d9663f}
+.m1 .wave{display:flex;align-items:flex-end;gap:2px;height:34px;margin:8px 14px}
+.m1 .wave i{flex:1;background:#3a3129;border-radius:1px}
+.m1 .wave i.on{background:#c0512f}
+.m1 .card{margin:6px 14px;border:1px solid #c0512f;background:rgba(192,81,47,.12);border-radius:4px;padding:5px 8px;font-size:10px}
+
+/* mini 2: warm wall chart */
+.m2{background:#f4efe3;background-image:linear-gradient(#c9bda6 1px,transparent 1px);background-size:100% 14px;color:#2a2118}
+.m2 .tag{font:700 8px "Cascadia Mono",monospace;color:#b4472a;letter-spacing:.1em;padding:12px 12px 0}
+.m2 .h{font-family:"Songti SC",serif;font-size:19px;font-weight:700;padding:4px 12px;line-height:1.3}
+.m2 .h em{font-style:normal;color:#b4472a}
+.m2 .pipe{display:flex;align-items:center;gap:0;margin:12px 12px;border:1.5px solid #2a2118;background:#faf7f0;padding:10px 6px}
+.m2 .n{flex:1;text-align:center;position:relative}
+.m2 .n i{width:18px;height:18px;border:1.5px solid #2a2118;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font:700 8px "Songti SC",serif;font-style:normal}
+.m2 .n.hot i{background:#b4472a;border-color:#b4472a;color:#fff}
+.m2 .n b{display:block;font-size:8.5px;margin-top:3px}
+.m2 .n:not(:last-child)::after{content:"";position:absolute;top:9px;right:-6px;width:12px;height:1.5px;background:#2a2118}
+
+/* mini 3: giant poster */
+.m3{background:#c0392b;color:#faf6ee;display:flex;overflow:hidden}
+.m3 .l{flex:1.1;padding:16px 0 12px 14px;position:relative;z-index:2}
+.m3 .h{font-family:"Songti SC",serif;font-size:20px;font-weight:900;line-height:1.2}
+.m3 .h em{font-style:normal;background:#1a1512;padding:0 5px;display:inline-block}
+.m3 .p{font-size:9px;margin-top:7px;opacity:.9;line-height:1.5}
+.m3 .g{position:absolute;right:-14px;top:50%;transform:translateY(-50%);font-family:"Songti SC",serif;font-size:130px;font-weight:900;color:#c0392b;line-height:.8;z-index:1}
+.m3 .r{flex:.9;background:#1a1512;display:flex;align-items:center;justify-content:center;border-left:2px solid #faf6ee;position:relative}
+.m3 .stamp{width:84%;border:2px solid #faf6ee;background:#000;font-size:0}
+.m3 .stamp .bar{height:9px;background:#faf6ee;display:flex;align-items:center;gap:3px;padding:0 5px}
+.m3 .stamp .bar i{width:4px;height:4px;border-radius:50%;background:#1a1512;opacity:.4}
+.m3 .stamp .bar i:first-child{background:#c0392b;opacity:1}
+.m3 .stamp .body{height:52px;background:linear-gradient(90deg,#2b2b2b 22%,#f4f4f4 22%)}
+
+/* mini 4: swiss grid (backup) */
+.m4{background:#fff;color:#111;padding:14px}
+.m4 .row{display:flex;gap:8px;margin-bottom:8px}
+.m4 .col{flex:1;border-top:2px solid #111;padding-top:5px;font-size:8.5px;line-height:1.5}
+.m4 .big{font-size:26px;font-weight:800;letter-spacing:-.02em;line-height:1.05}
+.m4 .red{color:#c0392f}
+
+/* mini 5: japanese magazine dense (backup) */
+.m5{background:#fff;color:#111;display:flex}
+.m5 .lp{flex:1;border-right:1.5px solid #111;padding:12px 10px}
+.m5 .lp .h{font-family:"Songti SC",serif;font-size:16px;font-weight:900;line-height:1.25}
+.m5 .lp .mk{background:#ffe14d;padding:0 2px}
+.m5 .lp .map{margin-top:8px;border:1.5px solid #111;height:44px;position:relative}
+.m5 .lp .map i{position:absolute;width:8px;height:8px;border-radius:50%;background:#d33}
+.m5 .rp{flex:1;padding:12px 10px}
+.m5 .cells{display:grid;grid-template-columns:repeat(3,1fr);gap:3px}
+.m5 .cells i{border:1.5px solid #111;height:20px;display:block}
+.m5 .cells i.y{background:#ffe14d}
+.m5 .cells i.b{background:#1a4fd6}
+
+/* mini 6: dark glow saas (backup) */
+.m6{background:#0d0f14;color:#e6e9f0;padding:0;position:relative;overflow:hidden}
+.m6 .glow{position:absolute;width:170px;height:170px;border-radius:50%;background:radial-gradient(circle,rgba(99,102,241,.35),transparent 65%);top:-60px;right:-40px}
+.m6 .nav{height:14px;border-bottom:1px solid #1e2330;display:flex;align-items:center;padding:0 8px;gap:5px;position:relative}
+.m6 .nav i{width:16px;height:3px;background:#2a3040;display:block;border-radius:2px}
+.m6 .h{font-size:18px;font-weight:700;padding:22px 14px 6px;position:relative}
+.m6 .h em{font-style:normal;color:#818cf8}
+.m6 .p{font-size:9px;color:#8b93a7;padding:0 14px;position:relative}
+.m6 .cards{display:flex;gap:5px;padding:10px 14px;position:relative}
+.m6 .cards i{flex:1;height:30px;background:#161a24;border:1px solid #232a3a;border-radius:4px;display:block}
+</style></head><body>
+<h1>课序 KEXU · 产品介绍网页 — 六个候选</h1>
+<p class="sub">三套逻辑各两个候选。前三张（红色标记）做成完整版，后三张为备选。选定后我会继续完善被选中的那一版。</p>
+<div class="grid">
+
+  <div class="cell"><div class="mini m1">
+    <div class="top"><i></i><i></i><i></i></div>
+    <div class="h">把一个主题，做成一节<em>会回答问题</em>的微课。</div>
+    <div class="wave"><i style="height:30%"></i><i style="height:60%" class="on"></i><i style="height:85%" class="on"></i><i style="height:50%" class="on"></i><i style="height:70%"></i><i style="height:40%"></i><i style="height:90%"></i><i style="height:55%"></i><i style="height:35%"></i><i style="height:75%"></i><i style="height:45%"></i><i style="height:65%"></i><i style="height:30%"></i><i style="height:80%"></i><i style="height:50%"></i><i style="height:60%"></i></div>
+    <div class="card">概念卡 · 提示词 — 讲到这个词时，卡片自己出现</div>
+  </div><div class="meta"><b>① 制片厂 · 暗场时间轴</b><small>首屏是一条会动的声音/文字时间轴，波形逐字高亮、卡片随时间弹出。产品最独特的结构直接成为门面。</small><span class="pick">完整版</span></div></div>
+
+  <div class="cell"><div class="mini m2">
+    <div class="tag">微课生产线 · 全流程</div>
+    <div class="h">从一个主题，到一节<em>会回答问题</em>的课。</div>
+    <div class="pipe">
+      <div class="n"><i>一</i><b>主题</b></div>
+      <div class="n"><i>二</i><b>讲稿</b></div>
+      <div class="n"><i>三</i><b>课件</b></div>
+      <div class="n hot"><i>四</i><b>声音</b></div>
+      <div class="n"><i>五</i><b>成片</b></div>
+      <div class="n"><i>六</i><b>课程</b></div>
+    </div>
+  </div><div class="meta"><b>② 教学挂图 · 暖纸衬线</b><small>像教师办公室里的教学挂图：暖纸底、宋体大标题、真实的六段生产线结构图、五层架构剖面。结构化内容画成结构图。</small><span class="pick">完整版</span></div></div>
+
+  <div class="cell"><div class="mini m3">
+    <div class="l">
+      <div class="h">一节课的<em>流水线</em></div>
+      <div class="p">讲稿 · 课件 · 试讲 · 旁白 · 成片 · 交互课程</div>
+    </div>
+    <div class="r"><span class="g">序</span><div class="stamp"><div class="bar"><i></i><i></i><i></i></div><div class="body"></div></div></div>
+  </div><div class="meta"><b>③ 巨字海报 · 粗野主义</b><small>品牌字「序」切进首屏，砖红/墨黑/米白三色硬色块，粗规线、大数字，产品截图当邮票盖在色块里。</small><span class="pick">完整版</span></div></div>
+
+  <div class="cell"><div class="mini m4">
+    <div class="big">微课<span class="red">生产线</span></div>
+    <div class="row" style="margin-top:10px">
+      <div class="col">主题<br>教师给出想法</div>
+      <div class="col">讲稿<br>智能体生成</div>
+      <div class="col">课件<br>多引擎排版</div>
+      <div class="col">成片<br>逐字对齐</div>
+    </div>
+  </div><div class="meta"><b>④ 瑞士网格 · 白底极简</b><small>Helvetica 式网格、细线分栏、红黑两色。克制耐看，但与最近八次交付的「白底无衬线」撞得最狠。</small><span class="pick bak">备选</span></div></div>
+
+  <div class="cell"><div class="mini m5">
+    <div class="lp">
+      <div class="h"><span class="mk">课序</span>把一节课<br>推到成片</div>
+      <div class="map"><i style="top:8px;left:12px"></i><i style="top:22px;left:44px;background:#1a4fd6"></i><i style="top:30px;left:76px"></i></div>
+    </div>
+    <div class="rp">
+      <div class="cells"><i></i><i class="y"></i><i></i><i class="b"></i><i></i><i></i><i></i><i></i><i class="y"></i></div>
+    </div>
+  </div><div class="meta"><b>⑤ 日式杂志密排</b><small>POPEYE/BRUTUS 式高密度图解：马克笔高亮标题、手绘路线图、九宫格数据。信息量大，但制作成本最高。</small><span class="pick bak">备选</span></div></div>
+
+  <div class="cell"><div class="mini m6">
+    <div class="glow"></div>
+    <div class="nav"><i></i><i></i><i></i><i></i></div>
+    <div class="h">把一节课推到<em>成片</em></div>
+    <div class="p">智能体协作 · 逐字对齐 · 交互课程</div>
+    <div class="cards"><i></i><i></i><i></i></div>
+  </div><div class="meta"><b>⑥ 暗色发光 SaaS</b><small>Linear 式深底＋蓝紫辉光＋玻璃卡片。最像当下 AI 产品官网，也最容易读出「AI 做的」，故列为备选。</small><span class="pick bak">备选</span></div></div>
+
+</div>
+</body></html>
