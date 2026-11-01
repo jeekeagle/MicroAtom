@@ -17,6 +17,7 @@ import type {
   ValueDimension
 } from '../src/types';
 import { callModel, parseJsonLoose } from './llm';
+import { agentRunBrief, memoryBrief } from './briefs';
 import { reconcileScript, reconcileSlides } from './mapping';
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
@@ -67,25 +68,21 @@ const scriptSchema = `{
   "quality": {"structure": 92, "oral": 90, "value": 89, "fit": 91, "note": "一句质检建议"}
 }`;
 
-export function buildScriptMessages(input: ScriptGenerationInput, memory?: TeacherMemory) {
+export function buildScriptMessages(
+  input: ScriptGenerationInput,
+  memory?: TeacherMemory,
+  agentLine = ''
+) {
   const duration = clamp(Number(input.durationMinutes) || 8, 3, 45) * 60;
-  const memoryBlock = memory
-    ? `
-教师记忆（长期档案，作为稳定的教学约束）：
-- 任教学科与学段：${memory.subject || '未填写'} · ${memory.grade || '未填写'}
-- 教龄：${memory.yearsExperience || 0} 年
-- 常见讲述风格：${memory.teachingStyle || '未填写'}
-- 备课经验：${memory.experience || '未填写'}
-- 教学心得：${memory.insights || '未填写'}
-请在不改变课程目标的前提下，贴近这位教师的表达习惯与经验判断；不要把这些档案原文写进讲稿。`
-    : '';
+  const memoryBlock = memoryBrief(memory);
   return [
     {
       role: 'system' as const,
       content:
         '你是一位资深课程设计师与微课讲稿作者。你的输出必须严格是 JSON，不要 Markdown，不要解释。' +
         '讲稿要口语化、可朗读、有认知冲突和迁移，不堆砌术语。每个段落只承担一个教学任务。' +
-        '价值引领必须落在具体判断或行动上，不能只写口号。'
+        '价值引领必须落在具体判断或行动上，不能只写口号。' +
+        (agentLine ? `\n\n${agentLine}` : '')
     },
     {
       role: 'user' as const,
@@ -111,6 +108,10 @@ ${memoryBlock}
 4. id 使用英文短标识且全课唯一；order 从 1 连续递增；role 只能是 intro、objectives、body、close。
 5. 所有 durationSeconds 为正整数，合计接近 ${duration} 秒。
 6. quality 四项为 0-100 的整数。
+7. 术语口径：英文专有名词首次出现写成“中文（English）”，之后一律只用中文；不要发明档案里没有的产品指标、论文结论与功能。
+8. 凡是出现“能做到”这类能力判断，必须紧跟一个适用条件或一个反例，不许只讲好的一面。
+9. 全篇至少留一处让学生停下来自己判断的地方（该不该用、错在哪一环、怎么验证），并在 close 段给出一条可检验的判断标准。
+10. 不许出现“赋能、颠覆、重塑、全面革新”这类没有具体动作的词。
 
 只输出符合以下结构的 JSON：
 ${scriptSchema}`
@@ -232,11 +233,12 @@ export async function generateScriptWithModel(
   input: ScriptGenerationInput,
   settings: RuntimeSettings,
   version: number,
-  memory?: TeacherMemory
+  memory?: TeacherMemory,
+  agentLine = ''
 ): Promise<{ script: CourseScript; meta: GenerationMeta }> {
   const startedAt = Date.now();
   const response = await callModel(settings, {
-    messages: buildScriptMessages(input, memory),
+    messages: buildScriptMessages(input, memory, agentLine),
     json: true,
     temperature: 0.75,
     maxTokens: 5200
@@ -281,7 +283,8 @@ const accents: CourseSlide['accent'][] = ['brick', 'teal', 'gold', 'ink'];
 
 export function buildSlideMessages(
   script: CourseScript,
-  options: { visualKinds?: string[]; density?: string } = {}
+  options: { visualKinds?: string[]; density?: string } = {},
+  agentLine = ''
 ) {
   const sectionText = script.sections
     .map(
@@ -295,7 +298,9 @@ export function buildSlideMessages(
       role: 'system' as const,
       content:
         '你是一位课程视觉设计师，负责把讲稿转成 16:9 微课分镜。输出必须严格是 JSON，不要 Markdown，不要解释。' +
-        '每页只承担一个表达任务，标题短，要点不超过 3 条，每条不超过 26 个汉字。不要把整段讲稿搬上屏幕。'
+        '每页只承担一个表达任务，标题短，要点不超过 3 条，每条不超过 26 个汉字。不要把整段讲稿搬上屏幕。' +
+        '抽象机制一律画成结构图（循环、时序、决策分支），能画图就不写要点；图必须能独立解释这一页的判断。' +
+        (agentLine ? `\n\n${agentLine}` : '')
     },
     {
       role: 'user' as const,
@@ -604,14 +609,15 @@ export function normalizeSlides(raw: unknown, script: CourseScript): CourseSlide
 export async function generateSlidesWithModel(
   script: CourseScript,
   settings: RuntimeSettings,
-  options: { visualKinds?: string[]; density?: string } = {}
+  options: { visualKinds?: string[]; density?: string } = {},
+  agentLine = ''
 ): Promise<{ slides: CourseSlide[]; meta: GenerationMeta }> {
   const startedAt = Date.now();
   const response = await callModel(settings, {
-    messages: buildSlideMessages(script, options),
+    messages: buildSlideMessages(script, options, agentLine),
     json: true,
     temperature: 0.6,
-    maxTokens: 4200
+    maxTokens: 9000
   });
   const raw = parseJsonLoose(response.text);
   const slides = normalizeSlides(raw, script);
@@ -634,13 +640,19 @@ export interface SkillRunOutput {
   result: string;
 }
 
-export function buildSkillMessages(skill: AgentSkill, input: string, upstream?: string) {
+export function buildSkillMessages(
+  skill: AgentSkill,
+  input: string,
+  upstream?: string,
+  agentLine = ''
+) {
   return [
     {
       role: 'system' as const,
       content:
         '你是微课生产平台中的专项 Skill。只输出 JSON，不要 Markdown，不要解释。' +
-        '你要给出可执行、可进入下一生产环节的结果，避免空话。'
+        '你要给出可执行、可进入下一生产环节的结果，避免空话。' +
+        (agentLine ? `\n\n${agentLine}` : '')
     },
     {
       role: 'user' as const,
@@ -664,11 +676,12 @@ export async function runSkillWithModel(
   skill: AgentSkill,
   input: string,
   settings: RuntimeSettings,
-  upstream?: string
+  upstream?: string,
+  agentLine = ''
 ): Promise<{ output: SkillRunOutput; meta: GenerationMeta; rawText: string }> {
   const startedAt = Date.now();
   const response = await callModel(settings, {
-    messages: buildSkillMessages(skill, input, upstream),
+    messages: buildSkillMessages(skill, input, upstream, agentLine),
     json: true,
     temperature: 0.6,
     maxTokens: 1400
@@ -719,9 +732,10 @@ export async function runAgentPipeline(
   const steps: AgentStepResult[] = [];
   let upstream = '';
   let lastMeta: GenerationMeta | null = null;
+  const agentLine = agentRunBrief(agent);
 
   for (const skill of enabled) {
-    const result = await runSkillWithModel(skill, input, settings, upstream);
+    const result = await runSkillWithModel(skill, input, settings, upstream, agentLine);
     lastMeta = result.meta;
     upstream = result.output.result || result.output.summary;
     steps.push({

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowRight,
+  Blocks,
   Check,
   Clapperboard,
   Download,
@@ -95,7 +96,9 @@ export function RenderStage({ project, onProject, notify, onStage }: StageProps)
     try {
       const next = await api.projectAction(project.id, 'publish');
       onProject(next);
-      notify('微课已发布，归入已完成课程');
+      notify('微课已发布，接着把卡片挂到时间点上');
+      // 发布即封版：下一步天然是挂载，不让人再自己找入口。
+      onStage('mount');
     } catch (error) {
       notify(error instanceof Error ? error.message : '发布失败', 'error');
     } finally {
@@ -325,6 +328,27 @@ export function RenderStage({ project, onProject, notify, onStage }: StageProps)
         </section>
 
         <aside className="render-sidebar">
+          {isDone && (
+            <div className="render-next-card">
+              <span className="eyebrow">
+                <Blocks size={12} /> NEXT / 挂载与交互
+              </span>
+              <h4>成片已封版，去挂载卡片</h4>
+              <p>
+                成片不再改动。把概念卡、问答、自检清单钉到关键时间点，导出的学习工作台就会在最合适的
+                那一秒停住画面或弹出卡片。
+              </p>
+              <Button
+                variant="primary"
+                size="sm"
+                icon={<ArrowRight size={15} />}
+                onClick={() => onStage('mount')}
+              >
+                进入挂载
+              </Button>
+            </div>
+          )}
+
           <div className="render-config-card">
             <span className="eyebrow">ASSEMBLY CONFIG</span>
             <h4>组装参数</h4>
@@ -421,7 +445,9 @@ export function RenderStage({ project, onProject, notify, onStage }: StageProps)
             {isDone ? '微课成片已生成' : '等待成片渲染'}
           </span>
           <small>
-            {isDone ? '可下载成片或直接发布。' : '点击“开始渲染成片”执行异步流水线。'}
+            {isDone
+              ? '成片可下载、可发布；下一步去「挂载」把卡片钉到时间点上。'
+              : '点击“开始渲染成片”执行异步流水线。'}
           </small>
         </div>
         <div className="stage-actionbar-buttons">
@@ -433,14 +459,23 @@ export function RenderStage({ project, onProject, notify, onStage }: StageProps)
             返回课件
           </Button>
           {isDone && project.render?.downloadUrl ? (
-            <a
-              className="button button-primary button-md"
-              href={project.render.downloadUrl}
-              download={`${project.title}.mp4`}
-            >
-              <Download size={16} />
-              下载微课 MP4
-            </a>
+            <>
+              <a
+                className="button button-secondary button-md"
+                href={project.render.downloadUrl}
+                download={`${project.title}.mp4`}
+              >
+                <Download size={16} />
+                下载 MP4
+              </a>
+              <Button
+                variant="primary"
+                icon={<Blocks size={16} />}
+                onClick={() => onStage('mount')}
+              >
+                去挂载卡片
+              </Button>
+            </>
           ) : (
             <Button
               variant="primary"

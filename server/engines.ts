@@ -59,11 +59,28 @@ export const DEFAULT_ENGINES: ProductionEngine[] = [
     true
   ),
   engine(
+    'engine-slides-deck',
+    '授课放映课件引擎',
+    'slides',
+    'structure',
+    '默认课件链路：把已确认讲稿转成 1920×1080 白底单文件放映课件，支持键盘翻页、渐进呈现、就地改字与打印成 PDF，逐页画面同时供成片使用。',
+    'agent-slides',
+    ['slide-outline', 'slide-deck', 'visual-audit'],
+    {
+      mode: 'frontend-slides',
+      layoutBias: 'white',
+      visualDensity: 'rich',
+      whiteCanvas: true,
+      deck: true
+    },
+    true
+  ),
+  engine(
     'engine-slides-default',
     '讲稿分镜引擎',
     'slides',
     'structure',
-    '当前默认课件链路，从已确认讲稿生成封面、概念页、对照页与收束页。',
+    '基础分镜链路，从已确认讲稿生成封面、概念页、对照页与收束页。',
     'agent-slides',
     ['slide-outline', 'slide-layout', 'visual-audit'],
     {
@@ -71,8 +88,7 @@ export const DEFAULT_ENGINES: ProductionEngine[] = [
       layoutBias: 'balanced',
       visualDensity: 'rich',
       visualKinds: 'diagram,steps,chart,timeline,matrix'
-    },
-    true
+    }
   ),
   engine(
     'engine-slides-white',
@@ -305,7 +321,18 @@ export function normalizeEngines(input: unknown): ProductionEngine[] {
 
   const engines = [...byId.values()];
   for (const stage of productionStages) {
-    if (engines.some((item) => item.stage === stage && item.isDefault)) continue;
+    // 每个阶段只允许一个默认引擎，否则解析时取到哪一个取决于数组顺序。
+    const defaults = engines.filter((item) => item.stage === stage && item.isDefault);
+    if (defaults.length > 1) {
+      const preferred = DEFAULT_ENGINES.find(
+        (item) => item.stage === stage && item.isDefault
+      )?.id;
+      const keep = defaults.find((item) => item.id === preferred) ?? defaults[0];
+      for (const item of defaults) {
+        if (item.id !== keep.id) item.isDefault = false;
+      }
+    }
+    if (defaults.length) continue;
     const fallback = DEFAULT_ENGINES.find((item) => item.stage === stage && item.isDefault);
     const target = fallback ? engines.find((item) => item.id === fallback.id) : undefined;
     if (target) target.isDefault = true;

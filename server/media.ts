@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type {
   Capabilities,
@@ -35,6 +36,9 @@ const chromeCandidates = [
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
   'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
 ].filter(Boolean) as string[];
+
+/** 本机可用的 Chromium 内核浏览器。截图和 PDF 渲染共用同一个。 */
+export const findChromePath = () => chromeCandidates.find((candidate) => fs.existsSync(candidate)) ?? '';
 
 const edgeVoices: Record<string, string> = {
   'zh-CN-XiaoxiaoNeural': '晓晓 · 温暖女声',
@@ -97,10 +101,41 @@ export function mediaUrl(projectId: string, relativePath: string) {
   return `/media/${safeSegment(projectId)}/${relativePath.split(path.sep).join('/')}`;
 }
 
+/**
+ * 结束一个子进程连同它派生的全部子进程。
+ * Windows 上浏览器进程会再 fork，只杀父进程会留下占着文件锁的孤儿进程。
+ */
+const killProcessTree = (pid: number | undefined) => {
+  if (!pid) return;
+  if (process.platform === 'win32') {
+    try {
+      spawn('taskkill', ['/pid', String(pid), '/T', '/F'], {
+        windowsHide: true,
+        stdio: 'ignore'
+      });
+      return;
+    } catch {
+      // taskkill 不可用时退回 signal。
+    }
+  }
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch {
+    // 进程可能已在超时与终止之间退出。
+  }
+};
+
 const runProcess = (
   command: string,
   args: string[],
-  options: { cwd?: string; onLine?: (line: string) => void } = {}
+  options: {
+    cwd?: string;
+    onLine?: (line: string) => void;
+    /** 超过这个时长仍未退出就强制终止，避免整条流水线被一个卡死的子进程拖住。 */
+    timeoutMs?: number;
+    /** 超时报错里显示的步骤名。 */
+    label?: string;
+  } = {}
 ) =>
   new Promise<string>((resolve, reject) => {
     const child = spawn(command, args, {
@@ -110,6 +145,29 @@ const runProcess = (
     });
     let output = '';
     let errorOutput = '';
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const finish = (action: () => void) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      action();
+    };
+
+    if (options.timeoutMs && options.timeoutMs > 0) {
+      const limit = options.timeoutMs;
+      timer = setTimeout(() => {
+        killProcessTree(child.pid);
+        finish(() =>
+          reject(
+            new Error(
+              `${options.label ?? command} 超过 ${Math.round(limit / 1000)} 秒没有响应，已强制结束`
+            )
+          )
+        );
+      }, limit);
+    }
 
     child.stdout.on('data', (chunk: Buffer) => {
       const text = chunk.toString('utf8');
@@ -121,13 +179,15 @@ const runProcess = (
       errorOutput += text;
       options.onLine?.(text);
     });
-    child.on('error', reject);
+    child.on('error', (error) => finish(() => reject(error)));
     child.on('close', (code) => {
-      if (code === 0) {
-        resolve(output);
-      } else {
-        reject(new Error(errorOutput.trim() || `${command} exited with ${code}`));
-      }
+      finish(() => {
+        if (code === 0) {
+          resolve(output);
+        } else {
+          reject(new Error(errorOutput.trim() || `${command} exited with ${code}`));
+        }
+      });
     });
   });
 
@@ -712,43 +772,181 @@ function slideBody(slide: CourseSlide) {
   </div></body></html>`;
 }
 
-async function renderSlideImages(project: CourseProject, projectDir: string) {
-  const chrome = chromeCandidates.find((candidate) => fs.existsSync(candidate));
-  if (!chrome) throw new Error('未找到可用于生成画面的 Chrome 或 Edge');
-  const slideDir = path.join(projectDir, 'slides');
-  fs.mkdirSync(slideDir, { recursive: true });
-  const output: Array<{ slide: CourseSlide; file: string }> = [];
+/**
+ * 把截图规整成严格的 1920×1080。
+ *
+ * Chrome 的 --screenshot 在部分机器上会受系统缩放、窗口边框影响，
+ * 抓出 2 倍图或非 16:9 的图；这类图直接叠到 1080p 画布上，
+ * 看上去就是"课件特别大、只露出一个角"。这里统一补白缩放到画布尺寸。
+ */
+async function normalizeSlideFrame(file: string) {
+  const probe = ffprobeCandidates.find((candidate) => exists(candidate) && candidate !== 'ffprobe');
+  if (probe) {
+    const size = await new Promise<{ width: number; height: number } | null>((resolve) => {
+      const child = spawn(probe, [
+        '-v',
+        'error',
+        '-select_streams',
+        'v:0',
+        '-show_entries',
+        'stream=width,height',
+        '-of',
+        'csv=p=0:s=x',
+        file
+      ]);
+      let text = '';
+      child.stdout.on('data', (chunk: Buffer) => (text += chunk.toString('utf8')));
+      child.on('error', () => resolve(null));
+      child.on('close', () => {
+        const match = text.trim().match(/(\d+)x(\d+)/);
+        resolve(match ? { width: Number(match[1]), height: Number(match[2]) } : null);
+      });
+    });
+    if (size && size.width === 1920 && size.height === 1080) return;
+  }
+  const temp = file.replace(/\.png$/i, '.norm.png');
+  await runProcess(getFfmpegPath(), [
+    '-y',
+    '-i',
+    file,
+    '-vf',
+    'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=white',
+    '-frames:v',
+    '1',
+    temp
+  ]);
+  if (fs.existsSync(temp)) fs.renameSync(temp, file);
+}
 
-  for (const [index, slide] of project.slides.entries()) {
-    const htmlPath = path.join(slideDir, `slide-${String(index + 1).padStart(2, '0')}.html`);
-    const pngPath = path.join(slideDir, `slide-${String(index + 1).padStart(2, '0')}.png`);
-    fs.writeFileSync(htmlPath, buildSlideHtml(slide, project), 'utf8');
-    const userDataDir = path.join(slideDir, `.chrome-${index}`);
-    try {
-      await runProcess(chrome, [
+/** 单页截图的硬上限。正常一页 1~2 秒，45 秒还没退出一律视为卡死。 */
+const SLIDE_CAPTURE_TIMEOUT = 45_000;
+/** 卡死后重试一次，仍然失败才让整次渲染失败。 */
+const SLIDE_CAPTURE_ATTEMPTS = 2;
+
+async function captureSlideImage(
+  chrome: string,
+  pageTarget: string,
+  pngPath: string,
+  slideIndex: number,
+  attempt: number
+) {
+  // 每次截图都用一个全新的、绝不重复的 profile 目录。
+  // 复用固定目录名是这类卡死的根源：上一轮留下的 SingletonLock 会让新的
+  // headless 实例以为还有别的实例在跑，于是既不截图也不退出。
+  const userDataDir = path.join(
+    os.tmpdir(),
+    `kexu-shot-${process.pid}-${slideIndex + 1}-${attempt}-${crypto.randomUUID().slice(0, 8)}`
+  );
+  fs.rmSync(userDataDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  try {
+    await runProcess(
+      chrome,
+      [
         '--headless=new',
         '--disable-gpu',
         '--hide-scrollbars',
         '--force-device-scale-factor=1',
         '--window-size=1920,1080',
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--disable-extensions',
+        '--disable-sync',
+        '--disable-background-networking',
+        '--disable-component-update',
+        '--disable-features=Translate,MediaRouter',
+        // 等布局与等比缩放脚本跑完再截图，避免抓到半成品画面。
+        '--virtual-time-budget=1200',
         `--user-data-dir=${userDataDir}`,
         `--screenshot=${pngPath}`,
-        `file:///${htmlPath.split(path.sep).join('/')}`
-      ]).catch(() => {
-        // Chrome writes the screenshot before returning a non-zero status in some versions.
-      });
-    } finally {
-      // The headless profile can hold Windows file locks briefly after Chrome exits.
-      try {
-        fs.rmSync(userDataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
-      } catch {
-        // A leftover profile is harmless; the next render uses a fresh index.
+        pageTarget
+      ],
+      {
+        timeoutMs: SLIDE_CAPTURE_TIMEOUT,
+        label: `第 ${slideIndex + 1} 页画面截图`
       }
+    );
+  } finally {
+    // 无论成功、超时还是失败，都要把 profile 收走；否则下一次会撞上文件锁。
+    try {
+      fs.rmSync(userDataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
+    } catch {
+      // 临时目录里的残留不影响后续渲染，系统重启时自会清掉。
     }
-    if (!fs.existsSync(pngPath)) {
-      throw new Error(`第 ${index + 1} 页课件画面生成失败`);
+  }
+}
+
+async function renderSlideImages(
+  project: CourseProject,
+  projectDir: string,
+  onPage?: (done: number, total: number) => void
+) {
+  const chrome = chromeCandidates.find((candidate) => fs.existsSync(candidate));
+  if (!chrome) throw new Error('未找到可用于生成画面的 Chrome 或 Edge');
+  // 成片画面与放映、逐页预览共用同一套渲染器，看到的课件就是录出来的课件。
+  const { buildDeckSlideHtml } = await import('./deck');
+  const slideDir = path.join(projectDir, 'slides');
+  fs.mkdirSync(slideDir, { recursive: true });
+  // 早先版本把浏览器 profile 建在 slides 目录里，锁文件会让后续截图卡死，这里一次性清干净。
+  for (const leftover of fs.readdirSync(slideDir)) {
+    if (!leftover.startsWith('.chrome-')) continue;
+    try {
+      fs.rmSync(path.join(slideDir, leftover), { recursive: true, force: true, maxRetries: 3 });
+    } catch {
+      // 被占用就下次再删，不影响这一轮渲染。
     }
+  }
+  const output: Array<{ slide: CourseSlide; file: string }> = [];
+  const total = project.slides.length;
+  // PDF 导入页的图片引用 /media 绝对地址，file:// 打开会解析不到，
+  // 所以这类项目改用本地 http 打开页面；其余项目仍走 file://，不依赖端口。
+  const needsHttp = project.slides.some((slide) => Boolean(slide.pageImage));
+  const origin = `http://127.0.0.1:${process.env.PORT || 8787}`;
+
+  for (const [index, slide] of project.slides.entries()) {
+    const htmlPath = path.join(slideDir, `slide-${String(index + 1).padStart(2, '0')}.html`);
+    const pngPath = path.join(slideDir, `slide-${String(index + 1).padStart(2, '0')}.png`);
+    // 看到什么就录什么：页面自带 HTML 就直接用它截图，只有缺失时才现场按默认版式生成。
+    // 这样工作台预览、试讲浮层和成片画面必然是同一份文件，不会出现"讲一版、录一版"。
+    const html =
+      slide.html && slide.html.trim()
+        ? slide.html
+        : buildDeckSlideHtml(slide, project, project.slides.length);
+    // 缺页面时生成的那份要写回去，否则预览仍然是空的，又会退回另一套版式。
+    if (!slide.html || !slide.html.trim()) slide.html = html;
+    fs.writeFileSync(htmlPath, html, 'utf8');
+
+    const pageTarget = needsHttp
+      ? `${origin}/media/${project.id}/slides/slide-${String(index + 1).padStart(2, '0')}.html`
+      : `file:///${htmlPath.split(path.sep).join('/')}`;
+
+    // 不先删旧图：截到临时名，成功后再改名覆盖。
+    // 这样「截图失败却把旧图当新图」不会发生，也不需要任何删除动作（删除在某些
+    // 受管环境里会被安全策略拦下，一拦整次渲染就废了）。
+    let lastError: unknown;
+    let captured = '';
+    for (let attempt = 0; attempt < SLIDE_CAPTURE_ATTEMPTS; attempt += 1) {
+      const partPath = pngPath.replace(/\.png$/i, `.part-${attempt}-${Date.now()}.png`);
+      try {
+        await captureSlideImage(chrome, pageTarget, partPath, index, attempt);
+      } catch (error) {
+        lastError = error;
+      }
+      // 浏览器偶尔写完图却不退出，这种情况也算成功。
+      if (fs.existsSync(partPath)) {
+        captured = partPath;
+        break;
+      }
+      if (attempt === SLIDE_CAPTURE_ATTEMPTS - 1) break;
+    }
+
+    if (!captured) {
+      const reason = lastError instanceof Error ? `（${lastError.message}）` : '';
+      throw new Error(`第 ${index + 1} 页课件画面生成失败${reason}`);
+    }
+    fs.renameSync(captured, pngPath);
+    await normalizeSlideFrame(pngPath);
     output.push({ slide, file: pngPath });
+    onPage?.(index + 1, total);
   }
   return output;
 }
@@ -778,18 +976,21 @@ interface FrameLike {
 
 // Build the picture-in-picture filter for the teacher camera using the
 // active video-frame scheme. Falls back to the classic bottom-right frame.
-function buildCameraFilter(frame: RuntimeSettings['videoFrame'], teacherIndex: number) {
+export function buildCameraFilter(frame: RuntimeSettings['videoFrame'], teacherIndex: number) {
   const active = frame?.enabled ? frame?.schemes.find((s) => s.id === frame.activeSchemeId) : undefined;
   if (!active) {
     return [
-      '[0:v]scale=1920:1080,fps=25,format=yuv420p[bg]',
+      '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=white,fps=25,format=yuv420p[bg]',
       `[${teacherIndex}:v]scale=480:-2,pad=iw+8:ih+8:4:4:0xF2EEE3,format=yuv420p[cam]`,
       '[bg][cam]overlay=W-w-40:H-h-40[vout]'
     ].join(';');
   }
   const scheme = active as FrameLike;
-  const camW = Math.max(120, Math.round(1920 * (scheme.scale || 0.25)));
   const bw = scheme.borderStyle === 'none' ? 0 : Math.max(0, Math.round(scheme.borderWidth || 0));
+  // 预览里 scale 是含边框的外框占画面宽度的比例（border-box），
+  // 所以这里要扣掉左右两道边框，成片尺寸才和用户拖出来的框一致。
+  const outerW = Math.max(120, Math.round(1920 * (scheme.scale || 0.25)));
+  const camW = Math.max(96, outerW - bw * 2);
   const hex = ('000000' + String(scheme.borderColor || '#F2EEE3').replace('#', '').toUpperCase()).slice(-6);
   const colorHex = '0x' + hex;
   const steps = [`scale=${camW}:-2`];
@@ -797,18 +998,27 @@ function buildCameraFilter(frame: RuntimeSettings['videoFrame'], teacherIndex: n
   steps.push('format=rgba');
   if (scheme.shape === 'rounded' || scheme.shape === 'circle' || scheme.shape === 'oval') {
     if (scheme.shape === 'circle') steps.unshift("crop='min(iw,ih)':'min(iw,ih)'");
-    const radius = scheme.shape === 'rounded' ? 'max(2,min(w,h)*0.12)' : null;
-    const alphaExpr = radius
-      ? `if(lte(hypot(max(abs(X-(w-1)/2)-(w/2-${radius}),0),max(abs(Y-(h-1)/2)-(h/2-${radius}),0)),${radius}),alpha(X,Y),0)`
-      : 'if(lte(pow((X-(w-1)/2)/(w/2),2)+pow((Y-(h-1)/2)/(h/2),2),1),alpha(X,Y),0)';
+    // geq 的表达式里只有大写 W/H 是画面尺寸，小写 w/h 会被当成未知函数，
+    // 圆角/圆形方案会直接让渲染失败；圆角半径按外框宽度算成具体像素值。
+    const radius = Math.max(2, Math.round(outerW * 0.12));
+    const alphaExpr =
+      scheme.shape === 'rounded'
+        ? `if(lte(hypot(max(abs(X-(W-1)/2)-(W/2-${radius}),0),max(abs(Y-(H-1)/2)-(H/2-${radius}),0)),${radius}),alpha(X,Y),0)`
+        : 'if(lte(pow((X-(W-1)/2)/(W/2),2)+pow((Y-(H-1)/2)/(H/2),2),1),alpha(X,Y),0)';
     steps.push(`geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='${alphaExpr}'`);
   }
+  // x / y 是"画中画左上角在整幅画面里的比例"，与设置页预览完全同一套坐标
+  // （预览用的是 left: x*100%）。以前按 (main_w-overlay_w) 折算，等于把比例
+  // 压缩到可移动的余量里，拖到右下角在成片里只剩七成位置，看起来停在中间。
   const xPos = Math.min(Math.max(Number(scheme.x) || 0, 0), 1);
   const yPos = Math.min(Math.max(Number(scheme.y) || 0, 0), 1);
   return [
-    '[0:v]scale=1920:1080,fps=25,format=yuv420p[bg]',
+    '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=white,fps=25,format=yuv420p[bg]',
     `[${teacherIndex}:v]${steps.join(',')}[cam]`,
-    `[bg][cam]overlay=x=${xPos}*(main_w-overlay_w):y=${yPos}*(main_h-overlay_h)[vout]`
+    // 兜住越界：位置超出画面时贴边，不再跑出一半。
+    `[bg][cam]overlay=x='min(max(${xPos.toFixed(4)}*main_w,0),main_w-overlay_w)':y='min(max(${yPos.toFixed(
+      4
+    )}*main_h,0),main_h-overlay_h)'[vout]`
   ].join(';');
 }
 
@@ -822,17 +1032,19 @@ export async function renderCourseVideo(
   const renderDir = path.join(projectDir, 'render');
   fs.mkdirSync(renderDir, { recursive: true });
 
-  onProgress(12, '清理上一次渲染');
-  for (const name of ['visuals.txt', 'audio.txt', 'course.mp4']) {
-    const target = path.join(renderDir, name);
-    if (fs.existsSync(target)) fs.unlinkSync(target);
-  }
+  onProgress(12, '准备渲染目录');
+  // 不删上一轮的产物：visuals.txt / audio.txt 是覆写，course.mp4 走"临时名 + 改名"，
+  // 都不需要删除动作——受管环境里删除可能被策略拦下，一拦整次渲染就废。
 
   if (!project.slides.length) throw new Error('课件为空，无法组装成片');
   if (!project.script?.sections.length) throw new Error('讲稿为空，无法组装成片');
 
   onProgress(22, '生成 1080p 课件画面');
-  const images = await renderSlideImages(project, projectDir);
+  const images = await renderSlideImages(project, projectDir, (done, total) => {
+    // 逐页推进进度，页面多的时候不至于一直停在 22% 看不出动静。
+    const ratio = total ? done / total : 1;
+    onProgress(22 + Math.round(ratio * 24), `生成课件画面 ${done}/${total}`);
+  });
   onProgress(48, '构建统一音画时间轴');
 
   const timeline = buildCourseTimeline(project, audioAsset);
@@ -908,7 +1120,7 @@ export async function renderCourseVideo(
   // only writes the first frame and the exported video collapses to a still.
   const videoFilter = hasTeacherVideo
     ? buildCameraFilter(settings.videoFrame, teacherVideoIndex)
-    : '[0:v]scale=1920:1080,fps=25,format=yuv420p[vout]';
+    : '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=white,fps=25,format=yuv420p[vout]';
 
   const audioInputs = audioSources.flatMap((file) => ['-i', file]);
   const audioFilter = [
@@ -923,6 +1135,8 @@ export async function renderCourseVideo(
 
   onProgress(68, '渲染 1080p 课程成片');
   const outputPath = path.join(renderDir, 'course.mp4');
+  // 先写到临时名：失败时上一版成片还是完整的，成功后再改名覆盖。
+  const buildingPath = path.join(renderDir, 'course.building.mp4');
   let lastProgress = 68;
   await new Promise<void>((resolve, reject) => {
     const child = spawn(
@@ -962,7 +1176,7 @@ export async function renderCourseVideo(
         '-progress',
         'pipe:1',
         '-nostats',
-        outputPath
+        buildingPath
       ],
       { windowsHide: true }
     );
@@ -990,7 +1204,8 @@ export async function renderCourseVideo(
     });
   });
 
-  if (!fs.existsSync(outputPath)) throw new Error('成片文件没有生成');
+  if (!fs.existsSync(buildingPath)) throw new Error('成片文件没有生成');
+  fs.renameSync(buildingPath, outputPath);
   const poster = path.join(renderDir, 'poster.jpg');
   const cover = images.find((item) => item.slide.layout === 'cover') ?? images[0];
   if (cover) {

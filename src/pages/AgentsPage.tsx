@@ -12,6 +12,7 @@ import {
   Pause,
   Play,
   Plus,
+  ShieldAlert,
   Sparkles,
   UsersRound
 } from 'lucide-react';
@@ -25,8 +26,26 @@ const emptyForm = {
   role: '',
   description: '',
   model: '教学推理模型',
-  skillIds: [] as string[]
+  skillIds: [] as string[],
+  expertise: '',
+  method: '',
+  constraints: ''
 };
+
+/** 专业标签在表单里用顿号连着写，存库时拆成数组。 */
+const splitTags = (value: string) =>
+  value
+    .split(/[、,，\n]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 8);
+
+const splitLines = (value: string) =>
+  value
+    .split(/\n/)
+    .map((item) => item.trim().replace(/^\d+[.、)]\s*/, ''))
+    .filter(Boolean)
+    .slice(0, 8);
 
 const colorFor = (index: number): AgentProfile['color'] =>
   (['brick', 'teal', 'gold', 'ink'] as const)[index % 4];
@@ -58,7 +77,7 @@ export function AgentsPage() {
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState<AgentProfile | null>(null);
-  const [runInput, setRunInput] = useState('用 8 分钟给八年级学生讲清杠杆原理，并突出证据意识。');
+  const [runInput, setRunInput] = useState('用 8 分钟给本科三年级学生讲清智能体为什么会工具调用失败，要能分清是模型、工具还是任务定义的问题。');
   const [runLoading, setRunLoading] = useState(false);
   const [runOutput, setRunOutput] = useState('');
   const [runTrace, setRunTrace] = useState<TraceStep[]>([]);
@@ -97,7 +116,10 @@ export function AgentsPage() {
       role: agent.role,
       description: agent.description,
       model: agent.model,
-      skillIds: [...agent.skillIds]
+      skillIds: [...agent.skillIds],
+      expertise: (agent.expertise ?? []).join('、'),
+      method: agent.method ?? '',
+      constraints: (agent.constraints ?? []).join('\n')
     });
     setRunOutput('');
     setRunTrace([]);
@@ -111,10 +133,16 @@ export function AgentsPage() {
     }
     setSaving(true);
     try {
+      const payload = {
+        ...form,
+        expertise: splitTags(form.expertise),
+        method: form.method.trim(),
+        constraints: splitLines(form.constraints)
+      };
       if (editing) {
-        await api.updateAgent(editing.id, form);
+        await api.updateAgent(editing.id, payload);
       } else {
-        await api.createAgent({ ...form, color: colorFor(agents.length) });
+        await api.createAgent({ ...payload, color: colorFor(agents.length) });
       }
       await refresh();
       setEditorOpen(false);
@@ -287,6 +315,32 @@ export function AgentsPage() {
                     </div>
                   </div>
                   <p className="agent-description">{agent.description}</p>
+                  {(agent.expertise?.length || agent.method || agent.constraints?.length) && (
+                    <div className="agent-profile">
+                      {agent.expertise?.length ? (
+                        <div className="agent-expertise">
+                          {agent.expertise.map((tag) => (
+                            <span key={tag}>{tag}</span>
+                          ))}
+                        </div>
+                      ) : null}
+                      {agent.method ? (
+                        <p className="agent-method">
+                          <span>工作方法</span>
+                          {agent.method}
+                        </p>
+                      ) : null}
+                      {agent.constraints?.length ? (
+                        <p
+                          className="agent-constraints"
+                          title={agent.constraints.map((item) => `· ${item}`).join('\n')}
+                        >
+                          <ShieldAlert size={12} />
+                          硬约束 {agent.constraints.length} 条
+                        </p>
+                      ) : null}
+                    </div>
+                  )}
                   <div className="agent-skill-line">
                     <span className="agent-skill-label">SKILL CHAIN</span>
                     <div>
@@ -406,6 +460,45 @@ export function AgentsPage() {
             />
           </label>
           <label className="field">
+            <span>
+              专业标签
+              <small>用顿号分隔，会显示在卡片上，也提示模型这个角色懂什么</small>
+            </span>
+            <input
+              value={form.expertise}
+              onChange={(event) =>
+                setForm((current) => ({ ...current, expertise: event.target.value }))
+              }
+              placeholder="智能体机制拆解、判断链设计、术语口径"
+            />
+          </label>
+          <label className="field">
+            <span>
+              工作方法
+              <small>它按什么顺序、什么标准做判断；这一段会注入生成提示</small>
+            </span>
+            <textarea
+              rows={3}
+              value={form.method}
+              onChange={(event) => setForm((current) => ({ ...current, method: event.target.value }))}
+              placeholder="先定这一讲要让学生作出的判断，再由判断倒推案例、机制与检验方式。"
+            />
+          </label>
+          <label className="field">
+            <span>
+              硬约束
+              <small>一行一条，违反即退回重做；同样会注入生成提示</small>
+            </span>
+            <textarea
+              rows={3}
+              value={form.constraints}
+              onChange={(event) =>
+                setForm((current) => ({ ...current, constraints: event.target.value }))
+              }
+              placeholder={'一讲只推进一条主线\n能力结论必须附适用条件'}
+            />
+          </label>
+          <label className="field">
             <span>执行模型</span>
             <input
               value={form.model}
@@ -465,7 +558,7 @@ export function AgentsPage() {
               rows={4}
               value={runInput}
               onChange={(event) => setRunInput(event.target.value)}
-              placeholder="例如：为八年级学生设计一节 8 分钟的杠杆原理微课。"
+              placeholder="例如：为本科三年级设计一节 8 分钟的工具调用失败归因微课。"
             />
           </label>
           <div className="run-modal-meta">

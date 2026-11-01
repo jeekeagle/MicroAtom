@@ -1,6 +1,7 @@
 import {
   ArrowRight,
   AudioLines,
+  Blocks,
   Check,
   ChevronRight,
   Clapperboard,
@@ -28,14 +29,16 @@ const stageIndex: Record<StageKey, number> = {
   script: 0,
   slides: 1,
   audio: 2,
-  render: 3
+  render: 3,
+  mount: 4
 };
 
 const stages: Array<{ id: StageKey; label: string; icon: typeof FilePenLine }> = [
   { id: 'script', label: '讲稿', icon: FilePenLine },
   { id: 'slides', label: '课件', icon: Layers3 },
   { id: 'audio', label: '声音', icon: AudioLines },
-  { id: 'render', label: '成片', icon: Clapperboard }
+  { id: 'render', label: '成片', icon: Clapperboard },
+  { id: 'mount', label: '挂载', icon: Blocks }
 ];
 
 const launchModes = [

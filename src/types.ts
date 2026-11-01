@@ -1,5 +1,5 @@
 export type CourseMode = 'oral' | 'auto' | 'ppt';
-export type StageKey = 'script' | 'slides' | 'audio' | 'render';
+export type StageKey = 'script' | 'slides' | 'audio' | 'render' | 'mount';
 export type ProductionStage = 'analysis' | 'script' | 'slides' | 'audio' | 'render' | 'media';
 export type EngineKind = 'analysis' | 'text' | 'structure' | 'image' | 'voice' | 'video' | 'media';
 export type MediaKind =
@@ -212,6 +212,8 @@ export interface CourseSlide {
   takeaway?: string;
   visual?: SlideVisual;
   html?: string;
+  /** PDF 导入页对应的原页图片文件名（相对 slides 目录），有值时整页展示原讲义。 */
+  pageImage?: string;
   note: string;
   accent: 'brick' | 'teal' | 'gold' | 'ink';
   sectionId: string;
@@ -314,6 +316,12 @@ export interface CourseMount {
   atSeconds: number;
   endSeconds?: number;
   placement: MediaTriggerPlacement;
+  /**
+   * 卡片出现时视频要不要停。
+   * true = 停在这一帧看卡片（交互题、自检这类需要学生动手的）；
+   * false = 边播边看（图谱、一图读懂这类补充说明的）。
+   */
+  hold?: boolean;
   source: 'agent' | 'manual' | 'artifact';
   createdAt: string;
   updatedAt: string;
@@ -334,7 +342,11 @@ export interface DeliveryCue {
   title: string;
   description: string;
   atSeconds: number;
+  endSeconds: number;
   placement: MediaTriggerPlacement;
+  /** 卡片出现时是否暂停视频 */
+  hold: boolean;
+  concept?: string;
   file: string;
 }
 
@@ -376,6 +388,41 @@ export interface TraceStep {
   warnings?: string[];
 }
 
+/** 授课放映课件：整册单文件 HTML，页序与 project.slides 一一对应。 */
+export interface CourseDeck {
+  url: string;
+  slides: number;
+  bytes: number;
+  engine?: string;
+  generatedAt: string;
+}
+
+/** 上传 PDF 转课件的过程记录，前端据此显示进度与失败原因。 */
+export interface PdfImportMeta {
+  fileName: string;
+  /** 原文件总页数。 */
+  pageCount: number;
+  /** 本次导入的页码区间（闭区间，1 起算）。 */
+  from: number;
+  to: number;
+  status: 'running' | 'ready' | 'error';
+  progress: number;
+  message: string;
+  sourceUrl?: string;
+  scriptEngine?: 'model' | 'local-fallback';
+  warnings?: string[];
+  importedAt: string;
+}
+
+/** 上传后先解析一次的结果，用来给老师选页码范围。 */
+export interface PdfInspectResult {
+  token: string;
+  fileName: string;
+  pageCount: number;
+  sizeBytes: number;
+  preview: Array<{ index: number; title: string; chars: number }>;
+}
+
 export interface CourseProject {
   id: string;
   workflowId: string;
@@ -395,6 +442,10 @@ export interface CourseProject {
   style: string;
   script?: CourseScript;
   slides: CourseSlide[];
+  /** 整册放映课件（单文件 HTML），由课件引擎生成。 */
+  deck?: CourseDeck;
+  /** 由 PDF 导入生成时才有，记录来源与解析进度。 */
+  pdfImport?: PdfImportMeta;
   recordings: RecordingAsset[];
   render?: RenderJob;
   timeline?: CourseTimeline;
@@ -435,6 +486,12 @@ export interface AgentProfile {
   color: 'brick' | 'teal' | 'gold' | 'ink';
   runs: number;
   lastRun: string;
+  /** 专业标签：这个角色真正懂什么，界面展示用。 */
+  expertise?: string[];
+  /** 工作方法：它按什么顺序、什么标准做判断，会注入生成提示。 */
+  method?: string;
+  /** 硬约束：越界即退回的几条红线，会注入生成提示。 */
+  constraints?: string[];
 }
 
 export type VideoFrameShape = 'rect' | 'rounded' | 'circle' | 'oval';
@@ -574,6 +631,14 @@ export interface TeacherMemory {
   teachingStyle: string;
   experience: string;
   insights: string;
+  /** 课程主线：每一讲都沿用的教学框架，决定讲稿骨架。 */
+  methodology?: string;
+  /** 案例池：反复使用、可被引用的真实案例与素材。 */
+  casePool?: string;
+  /** 口径与边界：术语定义、易错判断与不能讲错的地方。 */
+  boundaries?: string;
+  /** 作业与评价：判断学生是否真的学会的方式。 */
+  assessment?: string;
   updatedAt: string;
 }
 

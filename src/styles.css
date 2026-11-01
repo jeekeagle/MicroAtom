@@ -547,6 +547,11 @@ video {
   color: var(--gold);
 }
 
+.section-icon.is-ink {
+  background: rgba(24, 25, 28, 0.06);
+  color: var(--ink);
+}
+
 .memory-section-head strong {
   display: block;
   font-size: 14px;
@@ -3718,6 +3723,70 @@ kbd {
 
 .studio-progress .progress-track {
   grid-column: 1 / -1;
+}
+
+/* PDF 项目的身份条：原讲义来源、页码范围、讲稿引擎——一眼看出这门课是"照搬"来的 */
+.pdf-project-strip {
+  margin-top: 10px;
+  padding: 9px 15px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--paper) 92%, #fff);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.pdf-project-strip > svg {
+  flex: none;
+  color: var(--accent, #8a5a3b);
+}
+
+.pdf-project-source {
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.pdf-project-range::before,
+.pdf-project-engine::before {
+  content: '·';
+  margin-right: 10px;
+  color: var(--line);
+}
+
+.pdf-project-engine {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.pdf-project-engine.is-model {
+  color: #2f6b46;
+  background: color-mix(in srgb, #2f6b46 10%, transparent);
+}
+
+.pdf-project-engine.is-fallback {
+  color: #9a5a17;
+  background: color-mix(in srgb, #9a5a17 12%, transparent);
+}
+
+.pdf-project-warn {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: #9a5a17;
+  background: color-mix(in srgb, #9a5a17 12%, transparent);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: help;
 }
 
 .studio-stage-nav {
@@ -7556,6 +7625,56 @@ kbd {
   line-height: 1.7;
 }
 
+/* 智能体的专业档案：专长标签 + 工作方法 + 约束计数 */
+.agent-profile {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 0 0 10px;
+}
+
+.agent-expertise {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.agent-expertise span {
+  padding: 2px 6px;
+  background: var(--brick-soft);
+  border-radius: 2px;
+  color: var(--brick);
+  font-size: 8px;
+  letter-spacing: 0.01em;
+}
+
+.agent-method {
+  margin: 0;
+  padding-left: 8px;
+  border-left: 2px solid var(--line);
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.72;
+}
+
+.agent-method > span {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--muted-2);
+  font: 700 7px/1 var(--mono);
+  letter-spacing: 0.08em;
+}
+
+.agent-constraints {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  color: var(--gold);
+  font-size: 8px;
+  cursor: help;
+}
+
 .agent-skill-line {
   padding: 8px 9px;
   display: flex;
@@ -11345,6 +11464,19 @@ kbd {
   line-height: 1.6;
 }
 
+.frame-corners {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.frame-corners .frame-chips {
+  gap: 6px;
+}
+
 .frame-panel {
   display: flex;
   flex-direction: column;
@@ -12263,11 +12395,397 @@ kbd {
   gap: 8px;
 }
 
+.composer-fullscreen {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.composer-fullscreen:hover {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
 .composer-body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 330px;
   gap: 14px;
   align-items: start;
+}
+
+/* 全屏编辑：视频铺满、时间线贴底、右栏保留但自己滚 */
+.composer-page.is-fullscreen {
+  height: 100vh;
+  min-height: 0;
+  padding: 12px 16px 14px;
+  gap: 10px;
+  overflow: hidden;
+  background: #f6f7f9;
+}
+
+.composer-page.is-fullscreen .composer-head {
+  flex: none;
+}
+
+.composer-page.is-fullscreen .composer-body {
+  flex: 1;
+  min-height: 0;
+  align-items: stretch;
+  grid-template-columns: minmax(0, 1fr) 340px;
+}
+
+.composer-page.is-fullscreen .composer-main {
+  min-height: 0;
+}
+
+.composer-page.is-fullscreen .composer-monitor {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.composer-page.is-fullscreen .monitor-stage {
+  flex: 1;
+  aspect-ratio: auto;
+  min-height: 0;
+}
+
+.composer-page.is-fullscreen .composer-timeline {
+  flex: 0 1 auto;
+  max-height: 34vh;
+  overflow-y: auto;
+}
+
+/* 全屏时把轨道压扁一点，五条轨才装得下，视频不用让位 */
+.composer-page.is-fullscreen .composer-track {
+  gap: 6px;
+}
+
+.composer-page.is-fullscreen .track-lane {
+  height: 34px;
+}
+
+.composer-page.is-fullscreen .track-row.is-media .track-lane {
+  height: 62px;
+}
+
+.composer-page.is-fullscreen .composer-transport {
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+}
+
+.composer-page.is-fullscreen .composer-timeline {
+  padding: 10px 14px 12px;
+}
+
+.composer-page.is-fullscreen .composer-panel {
+  max-height: 100%;
+  overflow-y: auto;
+}
+
+.composer-main {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+/* 监视器：成片视频与课件/介质同屏，播放头推进时画面自己切 */
+.composer-monitor {
+  background: var(--workspace);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.monitor-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: #fff;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.monitor-badge {
+  flex: none;
+  padding: 3px 7px;
+  border-radius: 3px;
+  font: 700 9px/1.3 var(--mono);
+  letter-spacing: 0.06em;
+}
+
+.monitor-badge.is-ready {
+  background: var(--teal-soft);
+  color: var(--teal-dark);
+}
+
+.monitor-badge.is-draft {
+  background: var(--brick-soft);
+  color: var(--brick-dark);
+}
+
+.monitor-clock {
+  font: 600 11px/1 var(--mono);
+  color: var(--ink-2);
+}
+
+.monitor-link {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--brick);
+  font-size: 11px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.monitor-hit {
+  margin-left: auto;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitor-stage {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: #10161b;
+  overflow: hidden;
+}
+
+.monitor-stage > video,
+.monitor-stage > iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+
+.monitor-stage > video {
+  object-fit: contain;
+}
+
+.monitor-blank {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+  color: #8e9aa4;
+  font-size: 12px;
+}
+
+.monitor-caption {
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 7px 14px;
+  background: #fff;
+  border-top: 1px solid var(--line-soft);
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.monitor-mount {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border: 1px solid rgba(16, 24, 32, 0.1);
+  border-radius: 12px;
+  box-shadow:
+    0 26px 64px rgba(6, 12, 18, 0.44),
+    0 2px 6px rgba(6, 12, 18, 0.16);
+  overflow: hidden;
+  animation: monitor-mount-in 220ms cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+
+@keyframes monitor-mount-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.monitor-mount.is-below {
+  right: 4%;
+  bottom: 5%;
+  width: 50%;
+  height: 64%;
+}
+
+.monitor-mount.is-side {
+  right: 3%;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 44%;
+  height: 84%;
+}
+
+.monitor-mount.is-focus {
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 62%;
+  height: 80%;
+  border-radius: 14px;
+  box-shadow: 0 0 0 2000px rgba(8, 14, 20, 0.56), 0 26px 60px rgba(0, 0, 0, 0.42);
+}
+
+.monitor-mount-zoom {
+  flex: none;
+  margin-left: 2px;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--ink-2);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.monitor-mount-zoom:hover {
+  border-color: var(--brick);
+  color: var(--brick);
+}
+
+.monitor-mount-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  padding: 9px 10px;
+  background: #fff;
+  border-bottom: 1px solid #edf1f4;
+}
+
+.monitor-mount-head .monitor-mount-kind {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 19px;
+  padding: 0 7px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--mount-accent, #a14232) 12%, #fff);
+  color: var(--mount-accent, #a14232);
+  font: 800 9px/1 var(--sans);
+  letter-spacing: 0.03em;
+}
+
+.monitor-mount-kind::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.monitor-mount-head .monitor-mount-mode {
+  flex: none;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: #e9f3f0;
+  color: #0e6f63;
+  font: 700 9px/1 var(--sans);
+  letter-spacing: 0.02em;
+}
+
+.monitor-mount.is-hold .monitor-mount-mode {
+  background: #fbf1dd;
+  color: #8a6415;
+}
+
+.monitor-mount-head strong {
+  min-width: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitor-mount-head em {
+  margin-left: auto;
+  flex: none;
+  font: 600 9px/1 var(--mono);
+  font-style: normal;
+  color: var(--muted-2);
+}
+
+.monitor-mount iframe {
+  flex: 1;
+  width: 100%;
+  border: 0;
+  background: #fff;
+}
+
+.composer-now {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--workspace-deep);
+  border-radius: 4px;
+}
+
+.composer-now > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.composer-now span {
+  color: var(--muted-2);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.composer-now strong {
+  font-size: 12px;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-now small {
+  color: var(--muted);
+  font: 600 10px/1.4 var(--mono);
+}
+
+.composer-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
 }
 
 .composer-timeline {
@@ -12412,10 +12930,37 @@ kbd {
   cursor: pointer;
 }
 
+.lane-slide.is-live {
+  background: #fff;
+  border-color: var(--ink-2);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.lane-video {
+  background: linear-gradient(90deg, #1b2733, #24313d);
+  border-color: #24313d;
+  color: #e7eef4;
+  font-size: 11px;
+}
+
+.lane-video.is-empty {
+  background: repeating-linear-gradient(
+    135deg,
+    #f2f4f6,
+    #f2f4f6 8px,
+    #e9edf0 8px,
+    #e9edf0 16px
+  );
+  border-color: #e2e7ea;
+  color: var(--muted-2);
+}
+
 .lane-card {
   position: absolute;
   top: 10px;
-  width: 132px;
+  min-width: 132px;
+  max-width: 100%;
   padding: 7px 9px;
   text-align: left;
   background: #fff;
@@ -12424,6 +12969,12 @@ kbd {
   border-radius: 4px;
   cursor: grab;
   box-shadow: 0 2px 6px rgba(16, 24, 32, 0.06);
+}
+
+.lane-card.is-live {
+  background: #fffaf6;
+  border-color: var(--brick);
+  box-shadow: 0 4px 12px rgba(192, 81, 47, 0.18);
 }
 
 .lane-card span {
@@ -13075,4 +13626,487 @@ kbd {
   .model-key-row {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+/* ===========================================================
+   PDF 导入：把现成讲义按页转成课件
+   =========================================================== */
+
+.create-mode-tabs {
+  margin: 14px 22px 0;
+  display: inline-flex;
+  padding: 3px;
+  gap: 2px;
+  background: var(--workspace-deep);
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+}
+
+.create-mode-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.16s ease, color 0.16s ease;
+}
+
+.create-mode-tabs button:hover {
+  color: var(--ink-2);
+}
+
+.create-mode-tabs button.is-active {
+  background: #ffffff;
+  color: var(--brick-dark);
+  box-shadow: var(--shadow-sm);
+}
+
+.pdf-import-step {
+  gap: 16px;
+}
+
+.pdf-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 168px;
+  padding: 26px 20px;
+  border: 1px dashed #cfd6dd;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fdfefe, #f7f9fa);
+  color: var(--muted);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+
+.pdf-drop:hover,
+.pdf-drop.is-dragging {
+  border-color: var(--brick);
+  background: var(--brick-soft);
+  color: var(--brick-dark);
+}
+
+.pdf-drop strong {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.pdf-drop small {
+  color: var(--muted-2);
+  font-size: 11px;
+}
+
+.pdf-tips {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 13px 15px;
+  background: #fbfcfd;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+}
+
+.pdf-tips p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.pdf-tips strong {
+  color: var(--ink-2);
+  font-weight: 600;
+}
+
+.pdf-file-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.pdf-file-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: 6px;
+  background: var(--teal-soft);
+  color: var(--teal-dark);
+}
+
+.pdf-file-card > div {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pdf-file-card strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pdf-file-card small {
+  color: var(--muted-2);
+  font-size: 11px;
+}
+
+.pdf-range {
+  gap: 8px;
+}
+
+.pdf-range-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: -2px;
+  padding: 8px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  background: #fbfcfd;
+}
+
+.pdf-range-text {
+  color: var(--muted-2);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.pdf-range-text strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.pdf-range-all {
+  flex: none;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #ffffff;
+  color: var(--teal-dark);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.pdf-range-all:hover {
+  border-color: var(--teal);
+  background: var(--teal-soft);
+}
+
+.pdf-script-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: #fbfcfd;
+  cursor: pointer;
+}
+
+.pdf-script-toggle input {
+  margin-top: 2px;
+  accent-color: var(--brick);
+}
+
+.pdf-script-toggle span {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.pdf-script-toggle strong {
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.pdf-script-toggle small {
+  color: var(--muted-2);
+  font-size: 11px;
+}
+
+.pdf-preview {
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.pdf-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 12px;
+  background: var(--workspace-deep);
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.pdf-preview-head small {
+  color: var(--muted-2);
+  font-weight: 400;
+}
+
+.pdf-preview ul {
+  margin: 0;
+  padding: 4px 0;
+  max-height: 252px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.pdf-preview li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.pdf-preview li.is-picked {
+  background: var(--brick-soft);
+  color: var(--ink);
+}
+
+.pdf-preview-index {
+  width: 22px;
+  flex: none;
+  color: var(--muted-2);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-align: right;
+}
+
+.pdf-preview-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pdf-preview-chars {
+  flex: none;
+  color: var(--muted-2);
+  font-size: 10px;
+}
+
+.pdf-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--danger);
+  font-size: 11px;
+}
+
+.pdf-progress-card {
+  display: flex;
+  gap: 14px;
+  padding: 18px;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.pdf-progress-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--teal-soft);
+  color: var(--teal-dark);
+}
+
+.pdf-progress-icon.is-error {
+  background: var(--brick-soft);
+  color: var(--brick-dark);
+}
+
+.pdf-progress-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pdf-progress-body strong {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.pdf-progress-body > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.pdf-progress-body small {
+  color: var(--muted-2);
+  font-size: 11px;
+}
+
+.pdf-warning-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.pdf-warning-list p {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 11px;
+  border-radius: 5px;
+  background: var(--gold-soft);
+  color: #7a5a17;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.pdf-preview-empty {
+  margin: 0;
+  padding: 14px 12px;
+  color: var(--muted-2);
+  font-size: 11px;
+  text-align: center;
+}
+
+/* ================= 成片之后的「挂载」阶段 ================= */
+
+/* 成片页右栏：渲染完成后把下一步顶到最上面 */
+.render-next-card {
+  padding: 13px;
+  background: linear-gradient(180deg, #fdf5f1, #fffefa 72%);
+  border: 1px solid #e8cabc;
+  border-radius: 4px;
+}
+
+.render-next-card .eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--brick);
+}
+
+.render-next-card h4 {
+  margin: 6px 0 6px;
+  font-size: 13px;
+}
+
+.render-next-card p {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.render-next-card .button {
+  width: 100%;
+  justify-content: center;
+}
+
+/* 挂载阶段外壳 */
+.mount-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 22px;
+  padding: 10px 18px;
+  background: #fffdf8;
+  border-bottom: 1px solid var(--line);
+}
+
+.mount-summary-cell {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.mount-summary-cell > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.mount-summary-cell strong {
+  font: 700 17px/1 var(--mono);
+  color: var(--ink);
+}
+
+.mount-summary-cell strong.is-hold {
+  color: var(--gold);
+}
+
+.mount-summary-cell strong.is-flow {
+  color: var(--teal);
+}
+
+.mount-summary-cell small {
+  color: var(--muted-2);
+  font-size: 10px;
+}
+
+.mount-summary-note {
+  margin: 0 0 0 auto;
+  max-width: 46ch;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.mount-stage-body {
+  padding: 12px 14px 0;
+}
+
+/* 嵌进阶段的编辑台：收掉页面外边距与标题，动作按钮贴右 */
+.composer-page.is-embedded {
+  max-width: none;
+  min-height: 0;
+  padding: 0;
+  gap: 10px;
+  animation: none;
+}
+
+.composer-page.is-embedded .composer-title {
+  display: none;
+}
+
+.composer-page.is-embedded .composer-head {
+  justify-content: flex-end;
+  min-height: 0;
+}
+
+.composer-page.is-embedded .composer-body {
+  grid-template-columns: minmax(0, 1fr) 320px;
 }

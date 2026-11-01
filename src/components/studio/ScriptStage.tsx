@@ -54,9 +54,11 @@ const qualityItems: Array<{
 ];
 
 export function ScriptStage({ project, onProject, notify, onStage }: StageProps) {
+  // PDF 项目的讲稿是逐页对应的，备课约束这类整体参数对它不起作用。
+  const isPdf = Boolean(project.pdfImport);
   const [draft, setDraft] = useState<CourseScript | undefined>(() => cloneScript(project.script));
   const [selectedId, setSelectedId] = useState(project.script?.sections[0]?.id ?? '');
-  const [briefOpen, setBriefOpen] = useState(!project.script);
+  const [briefOpen, setBriefOpen] = useState(!project.script && !project.pdfImport);
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -127,7 +129,7 @@ export function ScriptStage({ project, onProject, notify, onStage }: StageProps)
   };
 
   const generate = async () => {
-    if (!brief.topic.trim()) {
+    if (!isPdf && !brief.topic.trim()) {
       notify('请先填写课程主题', 'error');
       return;
     }
@@ -138,7 +140,16 @@ export function ScriptStage({ project, onProject, notify, onStage }: StageProps)
       setDraft(cloneScript(result.project.script));
       setSelectedId(result.project.script?.sections[0]?.id ?? '');
       setBriefOpen(false);
-      notify(result.project.script ? '讲稿已生成，请逐段校对' : '讲稿已更新');
+      const fallback = result.project.pdfImport?.scriptEngine === 'local-fallback';
+      notify(
+        isPdf
+          ? fallback
+            ? '已按页重写讲稿，但模型没接通，用的是页面文字兜底'
+            : '已按页重写讲稿，请逐页校对'
+          : result.project.script
+            ? '讲稿已生成，请逐段校对'
+            : '讲稿已更新'
+      );
     } catch (error) {
       notify(error instanceof Error ? error.message : '讲稿生成失败', 'error');
     } finally {
@@ -216,14 +227,16 @@ export function ScriptStage({ project, onProject, notify, onStage }: StageProps)
               口播采集
             </Button>
           )}
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={briefOpen ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
-            onClick={() => setBriefOpen((open) => !open)}
-          >
-            备课约束
-          </Button>
+          {!isPdf && (
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={briefOpen ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+              onClick={() => setBriefOpen((open) => !open)}
+            >
+              备课约束
+            </Button>
+          )}
           <Button
             variant="primary"
             size="sm"
@@ -231,12 +244,12 @@ export function ScriptStage({ project, onProject, notify, onStage }: StageProps)
             loading={generating}
             onClick={generate}
           >
-            {draft ? '重新生成' : '生成讲稿'}
+            {isPdf ? '按页重写' : draft ? '重新生成' : '生成讲稿'}
           </Button>
         </div>
       </div>
 
-      {briefOpen && (
+      {briefOpen && !isPdf && (
         <section className="brief-panel">
           <div className="brief-panel-head">
             <div>
@@ -256,7 +269,7 @@ export function ScriptStage({ project, onProject, notify, onStage }: StageProps)
               <input
                 value={brief.topic}
                 onChange={(event) => setBriefField('topic', event.target.value)}
-                placeholder="例如：杠杆原理"
+                placeholder="例如：工具调用为什么会失败"
               />
             </label>
             <label className="field">
@@ -264,7 +277,7 @@ export function ScriptStage({ project, onProject, notify, onStage }: StageProps)
               <input
                 value={brief.subject}
                 onChange={(event) => setBriefField('subject', event.target.value)}
-                placeholder="物理"
+                placeholder="人工智能"
               />
             </label>
             <label className="field">
@@ -273,7 +286,7 @@ export function ScriptStage({ project, onProject, notify, onStage }: StageProps)
                 <input
                   value={brief.grade}
                   onChange={(event) => setBriefField('grade', event.target.value)}
-                  placeholder="八年级"
+                  placeholder="本科·三年级"
                 />
                 <div className="input-with-suffix compact">
                   <input

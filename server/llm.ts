@@ -399,6 +399,61 @@ export async function callModel(
     : new ModelError('模型调用失败', 'MODEL_ERROR');
 }
 
+/**
+ * 输出被长度截断时，回退到最后一个完整的对象/数组，补齐括号后解析。
+ * 保住能用的部分，好过整批失败。
+ */
+function repairTruncatedJson(raw: string): unknown {
+  const cuts: number[] = [];
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < raw.length; index += 1) {
+    const ch = raw[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === '{' || ch === '[') stack.push(ch);
+    else if (ch === '}' || ch === ']') {
+      stack.pop();
+      cuts.push(index);
+    }
+  }
+  for (let k = cuts.length - 1; k >= 0; k -= 1) {
+    const prefix = raw.slice(0, cuts[k] + 1);
+    let string = false;
+    let escape = false;
+    const pending: string[] = [];
+    for (let index = 0; index < prefix.length; index += 1) {
+      const ch = prefix[index];
+      if (string) {
+        if (escape) escape = false;
+        else if (ch === '\\') escape = true;
+        else if (ch === '"') string = false;
+        continue;
+      }
+      if (ch === '"') string = true;
+      else if (ch === '{') pending.push('}');
+      else if (ch === '[') pending.push(']');
+      else if (ch === '}' || ch === ']') pending.pop();
+    }
+    if (string) continue;
+    try {
+      return JSON.parse(prefix + pending.reverse().join(''));
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
 export function parseJsonLoose<T = unknown>(text: string): T {
   let content = text.trim();
   const fence = /^```(?:json)?\s*([\s\S]*?)```$/i.exec(content);
@@ -421,11 +476,15 @@ export function parseJsonLoose<T = unknown>(text: string): T {
   const close = open === '{' ? '}' : ']';
   const end = content.lastIndexOf(close);
   if (end <= start) {
+    const repaired = repairTruncatedJson(content.slice(start));
+    if (repaired) return repaired as T;
     throw new ModelError('模型输出的 JSON 不完整', 'MODEL_JSON_TRUNCATED');
   }
   try {
     return JSON.parse(content.slice(start, end + 1)) as T;
   } catch (error) {
+    const repaired = repairTruncatedJson(content.slice(start));
+    if (repaired) return repaired as T;
     throw new ModelError(
       `模型输出的 JSON 无法解析：${error instanceof Error ? error.message : '未知错误'}`,
       'MODEL_JSON_INVALID'

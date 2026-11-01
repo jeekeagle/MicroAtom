@@ -109,17 +109,30 @@ $sitePackages = Join-Path $runtimePython 'Lib\site-packages'
 New-Item -ItemType Directory -Force -Path $sitePackages | Out-Null
 & python -m pip install --disable-pip-version-check --no-warn-script-location `
   --target $sitePackages 'edge-tts==7.3.1'
+if ($LASTEXITCODE -ne 0) {
+  Write-Host '   Default pip index failed, retrying with https://pypi.org/simple ...'
+  & python -m pip install --disable-pip-version-check --no-warn-script-location `
+    --index-url https://pypi.org/simple --target $sitePackages 'edge-tts==7.3.1'
+}
 if ($LASTEXITCODE -ne 0) { throw 'Failed to install edge-tts into the portable Python runtime.' }
 & (Join-Path $runtimePython 'python.exe') -c "import importlib.metadata as m; print('edge-tts', m.version('edge-tts'))"
 if ($LASTEXITCODE -ne 0) { throw 'Portable edge-tts verification failed.' }
 
 Write-Host '[6/8] Copying FFmpeg...'
-$ffmpegRoot = Join-Path $env:APPDATA 'LobsterAI\huashu-motion\tools\ffmpeg\bin'
+$ffmpegCandidates = @()
+if ($env:KEXU_FFMPEG_DIR) { $ffmpegCandidates += $env:KEXU_FFMPEG_DIR }
+$ffmpegOnPath = Get-Command ffmpeg.exe -ErrorAction SilentlyContinue
+if ($ffmpegOnPath) { $ffmpegCandidates += (Split-Path -Parent $ffmpegOnPath.Source) }
+$ffmpegCandidates += (Join-Path $env:APPDATA 'LobsterAI\huashu-motion\tools\ffmpeg\bin')
+$ffmpegRoot = $ffmpegCandidates | Where-Object {
+  (Test-Path -LiteralPath (Join-Path $_ 'ffmpeg.exe')) -and
+  (Test-Path -LiteralPath (Join-Path $_ 'ffprobe.exe'))
+} | Select-Object -First 1
+if (-not $ffmpegRoot) {
+  throw 'FFmpeg not found. Set KEXU_FFMPEG_DIR to a folder containing ffmpeg.exe and ffprobe.exe.'
+}
 $ffmpeg = Join-Path $ffmpegRoot 'ffmpeg.exe'
 $ffprobe = Join-Path $ffmpegRoot 'ffprobe.exe'
-if (-not (Test-Path -LiteralPath $ffmpeg) -or -not (Test-Path -LiteralPath $ffprobe)) {
-  throw "FFmpeg binaries not found at $ffmpegRoot"
-}
 Copy-Item -LiteralPath $ffmpeg, $ffprobe -Destination $runtimeFfmpeg -Force
 
 Write-Host '[7/8] Copying launchers and documentation...'

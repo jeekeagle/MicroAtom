@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>PDF 页面渲染</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #fff; }
+</style>
+</head>
+<body>
+<script type="module">
+  // 这一页只干一件事：把 PDF 的某一页画成图，供后台逐页截图取用。
+  // 放在浏览器里渲染是因为 PDF 里的嵌字/图案填充要靠原生 Path2D 和 FontFace，
+  // 服务端画布对这些细节支持不全，个别页会整段文字丢失。
+  import * as pdfjsLib from '/pdfjs/build/pdf.min.mjs';
+
+  pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdfjs/build/pdf.worker.min.mjs';
+
+  const params = new URLSearchParams(location.search);
+  const fileUrl = params.get('file') || '';
+  window.__pdfReady = false;
+  window.__pdfError = '';
+  window.__pdfPages = 0;
+
+  const loadingTask = pdfjsLib.getDocument({
+    url: fileUrl,
+    cMapUrl: '/pdfjs/cmaps/',
+    cMapPacked: true,
+    standardFontDataUrl: '/pdfjs/standard_fonts/'
+  });
+
+  const ready = loadingTask.promise.then((doc) => {
+    window.__pdfDoc = doc;
+    window.__pdfPages = doc.numPages;
+    window.__pdfReady = true;
+    return doc;
+  }).catch((error) => {
+    window.__pdfError = String(error && error.message ? error.message : error);
+    throw error;
+  });
+
+  /**
+   * 渲染一页并返回 PNG dataURL。targetHeight 给定时按比例算缩放，
+   * 保证长边足够清晰又不会把几百页的文档撑成几百兆。
+   */
+  window.__renderPage = async (index, targetHeight, supersample) => {
+    const doc = await ready;
+    const page = await doc.getPage(index);
+    const base = page.getViewport({ scale: 1 });
+    const factor = typeof supersample === 'number' && supersample > 0 ? supersample : 1;
+    const scale = ((targetHeight || 1080) / base.height) * factor;
+    const viewport = page.getViewport({ scale });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.ceil(viewport.width));
+    canvas.height = Math.max(1, Math.ceil(viewport.height));
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    await page.render({ canvasContext: ctx, viewport, canvas }).promise;
+    const dataUrl = canvas.toDataURL('image/png');
+    // 及时断开引用，几十页连续渲染才不会一路涨内存。
+    canvas.width = 0;
+    canvas.height = 0;
+    page.cleanup();
+    return { dataUrl, width: Math.ceil(viewport.width), height: Math.ceil(viewport.height) };
+  };
+</script>
+</body>
+</html>

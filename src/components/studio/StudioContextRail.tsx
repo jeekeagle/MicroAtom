@@ -1,6 +1,7 @@
 import {
   ArrowUpRight,
   AudioLines,
+  Blocks,
   Check,
   CircleDashed,
   Clapperboard,
@@ -18,21 +19,24 @@ const stageAgent: Record<StageKey, string> = {
   script: 'agent-design',
   slides: 'agent-slides',
   audio: 'agent-voice',
-  render: 'agent-edit'
+  render: 'agent-edit',
+  mount: 'agent-insight'
 };
 
 const stageAdvice: Record<StageKey, string> = {
-  script: '先朗读开头与概念段，确认句子能在一次呼吸内读完。',
-  slides: '逐页检查画面是否只承担一个任务，避免把讲稿整段搬进页面。',
-  audio: '优先保证口述转写完整，再执行对齐；专有名词请人工校对。',
-  render: '渲染前确认所选音轨；首次导出建议保留默认 1080p 参数。'
+  script: '一讲只推进一条主线；朗读开头与机制段，确认每句能一次读完。',
+  slides: '先看结构图能否独立解释这一页的判断，别把讲稿整段搬进页面。',
+  audio: '机制段放慢、案例段加快；英文术语首次中英并读，之后只用中文。',
+  render: '渲染前核对音轨时长与课件页数，偏差超过 15% 先别出片。',
+  mount: '只卡“要停下来判断一次”的时刻；同类卡别连着排，留出呼吸。'
 };
 
 const stageIcon: Record<StageKey, typeof FilePenLine> = {
   script: FilePenLine,
   slides: Layers3,
   audio: AudioLines,
-  render: Clapperboard
+  render: Clapperboard,
+  mount: Blocks
 };
 
 function CheckRow({ done, label, detail }: { done: boolean; label: string; detail: string }) {

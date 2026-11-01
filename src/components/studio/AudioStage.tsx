@@ -12,10 +12,8 @@ import {
   Radio,
   Sparkles,
   Volume2,
-  WandSparkles,
   Waves
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
 import { useApp } from '../../context/AppContext';
 import { api } from '../../lib/api';
 import { formatDate, formatDuration } from '../../lib/format';
@@ -49,7 +47,6 @@ const kindIcon: Record<RecordingAsset['kind'], typeof AudioLines> = {
 const waveform = [18, 38, 24, 54, 32, 62, 42, 73, 31, 56, 22, 47, 66, 29, 51, 36, 69, 27, 44, 58, 30, 49];
 
 export function AudioStage({ project, onProject, notify, onStage }: StageProps) {
-  const navigate = useNavigate();
   const { data } = useApp();
   const [activeId, setActiveId] = useState(
     project.recordings.find((asset) => asset.kind === 'tts')?.id ??
@@ -154,14 +151,6 @@ export function AudioStage({ project, onProject, notify, onStage }: StageProps) 
               onClick={enterRender}
             >
               进入成片
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              icon={<WandSparkles size={15} />}
-              onClick={() => navigate(`/projects/${project.id}/course`)}
-            >
-              编辑成片
             </Button>
           </div>
         </div>
@@ -448,13 +437,6 @@ export function AudioStage({ project, onProject, notify, onStage }: StageProps) 
               onClick={enterRender}
             >
               进入成片
-            </Button>
-            <Button
-              variant="secondary"
-              icon={<WandSparkles size={16} />}
-              onClick={() => navigate(`/projects/${project.id}/course`)}
-            >
-              编辑成片
             </Button>
           </div>
         </div>

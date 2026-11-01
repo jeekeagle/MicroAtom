@@ -4,6 +4,7 @@ import {
   AudioLines,
   Brain,
   Check,
+  FileText,
   Layers3,
   LoaderCircle,
   Mic2,
@@ -18,6 +19,7 @@ import { api } from '../lib/api';
 import { insecureCaptureMessage, isSecureCaptureContext } from '../lib/secureCapture';
 import type { CourseMode, CreateProjectInput, TeacherMemory } from '../types';
 import { Button, Modal } from './ui';
+import { PdfImportPanel } from './PdfImportPanel';
 
 const modeOptions: Array<{
   id: CourseMode;
@@ -125,6 +127,8 @@ export function CreateProjectModal() {
   const memory = data?.memory;
   const [form, setForm] = useState<CreateProjectInput>(() => buildInitialForm(memory));
   const [step, setStep] = useState<1 | 2>(1);
+  // 同一个弹窗两种起步方式：从口述新建，或把现成 PDF 转成逐页课件。
+  const [view, setView] = useState<'wizard' | 'pdf'>('wizard');
   const [submitting, setSubmitting] = useState(false);
   const [phase, setPhase] = useState<BriefPhase>('idle');
   const [transcript, setTranscript] = useState('');
@@ -428,15 +432,49 @@ export function CreateProjectModal() {
   return (
     <Modal
       open={createProjectOpen}
-      onClose={() => setCreateProjectOpen(false)}
-      title="新建微课"
+      onClose={() => {
+        setCreateProjectOpen(false);
+        setView('wizard');
+      }}
+      title={view === 'pdf' ? '导入 PDF 课件' : '新建微课'}
       description={
-        step === 1
-          ? '可以口述课程设想，让智能体整理；也可以直接填写主题。'
-          : '请确认智能体整理的信息，修改后建立课程。'
+        view === 'pdf'
+          ? '把现成的 PDF 讲义按页变成课件，并配好逐页讲解词。'
+          : step === 1
+            ? '可以口述课程设想，让智能体整理；也可以直接填写主题。'
+            : '请确认智能体整理的信息，修改后建立课程。'
       }
       wide
     >
+      <div className="create-mode-tabs">
+        <button
+          type="button"
+          className={view === 'wizard' ? 'is-active' : ''}
+          onClick={() => setView('wizard')}
+        >
+          <Mic2 size={15} />
+          口述生成
+        </button>
+        <button
+          type="button"
+          className={view === 'pdf' ? 'is-active' : ''}
+          onClick={() => setView('pdf')}
+        >
+          <FileText size={15} />
+          导入 PDF
+        </button>
+      </div>
+
+      {view === 'pdf' ? (
+        <PdfImportPanel
+          onDone={(projectId) => {
+            setCreateProjectOpen(false);
+            setView('wizard');
+            navigate(`/projects/${projectId}`, { state: { freshProject: true } });
+          }}
+        />
+      ) : (
+        <>
       <div className="wizard-steps">
         <span className={step === 1 ? 'is-active' : 'is-done'}>01 · 口述与模式</span>
         <span className={step === 2 ? 'is-active' : ''}>02 · 确认教学意图</span>
@@ -511,7 +549,7 @@ export function CreateProjectModal() {
                   setTranscript(event.target.value);
                   transcriptRef.current = event.target.value;
                 }}
-                placeholder="例如：我想给八年级学生讲杠杆原理，从搬石头开始，先让他们找支点，再发现力臂……"
+                placeholder="例如：我想给本科三年级讲工具调用为什么会失败，先让他们跑一个翻车的智能体，再回头读日志……"
               />
             </label>
 
@@ -591,7 +629,7 @@ export function CreateProjectModal() {
               <input
                 value={form.topic}
                 onChange={(event) => set('topic', event.target.value)}
-                placeholder="例如：杠杆原理"
+                placeholder="例如：工具调用为什么会失败"
                 autoFocus
               />
             </label>
@@ -666,7 +704,7 @@ export function CreateProjectModal() {
               <input
                 value={form.subject}
                 onChange={(event) => set('subject', event.target.value)}
-                placeholder="物理"
+                placeholder="人工智能"
               />
             </label>
             <label className="field">
@@ -674,7 +712,7 @@ export function CreateProjectModal() {
               <input
                 value={form.grade}
                 onChange={(event) => set('grade', event.target.value)}
-                placeholder="八年级"
+                placeholder="本科·三年级"
               />
             </label>
             <label className="field">
@@ -735,6 +773,8 @@ export function CreateProjectModal() {
             </Button>
           </div>
         </div>
+      )}
+        </>
       )}
     </Modal>
   );

@@ -3,10 +3,14 @@ import {
   BookOpenCheck,
   Brain,
   Check,
+  ClipboardCheck,
+  Compass,
   GraduationCap,
+  Library,
   LoaderCircle,
   Save,
   School,
+  ShieldAlert,
   Sparkles,
   UserRound
 } from 'lucide-react';
@@ -104,8 +108,10 @@ export function MemoryPage() {
             <span className="eyebrow">MEMORY INJECTION</span>
             <p>这份档案会被注入到：</p>
             <ul>
-              <li>讲稿结构与口语风格</li>
+              <li>讲稿骨架与判断链</li>
+              <li>案例取材与术语口径</li>
               <li>学情判断与默认学段</li>
+              <li>随堂卡片的判分标准</li>
               <li>语音新建课程的信息整理</li>
             </ul>
           </div>
@@ -138,7 +144,7 @@ export function MemoryPage() {
                   <input
                     value={form.school}
                     onChange={(event) => set('school', event.target.value)}
-                    placeholder="例如：杭州市行知中学"
+                    placeholder="例如：智能计算学院"
                   />
                 </div>
               </label>
@@ -147,7 +153,7 @@ export function MemoryPage() {
                 <input
                   value={form.subject}
                   onChange={(event) => set('subject', event.target.value)}
-                  placeholder="物理"
+                  placeholder="人工智能（智能体方向）"
                 />
               </label>
               <label className="field">
@@ -155,7 +161,7 @@ export function MemoryPage() {
                 <input
                   value={form.grade}
                   onChange={(event) => set('grade', event.target.value)}
-                  placeholder="八年级"
+                  placeholder="本科·三年级"
                 />
               </label>
               <label className="field">
@@ -190,6 +196,66 @@ export function MemoryPage() {
                 value={form.teachingStyle}
                 onChange={(event) => set('teachingStyle', event.target.value)}
                 placeholder="例如：口语化、问题驱动，先给真实情境再收束概念"
+              />
+            </label>
+          </div>
+
+          <div className="memory-section">
+            <div className="memory-section-head">
+              <span className="section-icon is-ink">
+                <Compass size={17} />
+              </span>
+              <div>
+                <strong>领域知识</strong>
+                <small>这一块决定生成的讲稿像不像你上的课，不是教学通识</small>
+              </div>
+            </div>
+            <label className="field">
+              <span>
+                课程主线 / 教学框架
+                <small>每一讲都沿用的推进顺序，讲稿骨架按它排</small>
+              </span>
+              <textarea
+                rows={4}
+                value={form.methodology ?? ''}
+                onChange={(event) => set('methodology', event.target.value)}
+                placeholder="例如：五阶主线，每讲至少走三阶——判断该不该用 → 意图如何拆成步骤 → 谁受影响、出错谁承担"
+              />
+            </label>
+            <label className="field">
+              <span>
+                常用案例与素材池
+                <small>讲稿会被要求优先从这些例子里取材</small>
+              </span>
+              <textarea
+                rows={4}
+                value={form.casePool ?? ''}
+                onChange={(event) => set('casePool', event.target.value)}
+                placeholder="例如：工具调用的三类失败、检索与长期记忆的分工、多智能体分工的真实成本"
+              />
+            </label>
+            <label className="field">
+              <span>
+                术语口径与边界
+                <small>不能讲错、不能混用的地方，会作为硬约束注入</small>
+              </span>
+              <textarea
+                rows={4}
+                value={form.boundaries ?? ''}
+                onChange={(event) => set('boundaries', event.target.value)}
+                placeholder="例如：智能体 ≠ 大模型 ≠ 工作流；能力结论必须带适用条件；不引用未经核实的数据"
+              />
+            </label>
+            <label className="field">
+              <span>
+                作业与评价方式
+                <small>决定随堂卡片考什么、怎么判分</small>
+              </span>
+              <textarea
+                rows={3}
+                value={form.assessment ?? ''}
+                onChange={(event) => set('assessment', event.target.value)}
+                placeholder="例如：任务卡完成度、失败复盘日志、场景判断题；不考名词解释"
               />
             </label>
           </div>

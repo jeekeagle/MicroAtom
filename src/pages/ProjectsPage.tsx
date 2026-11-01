@@ -18,14 +18,16 @@ const stageNames: Record<StageKey, string> = {
   script: '讲稿工坊',
   slides: '课件工坊',
   audio: '声音与录制',
-  render: '成片交付'
+  render: '成片交付',
+  mount: '挂载与交互'
 };
 
 const stageDescriptions: Record<StageKey, string> = {
   script: '把主题、想法与价值引领收束成可确认的课程讲稿。',
   slides: '让已确认的讲稿驱动分镜与课件页面。',
   audio: '生成旁白、录制教师声音，并完成语音与页面定位。',
-  render: '检查音画同步，组装字幕并导出课程成片。'
+  render: '检查音画同步，组装字幕并导出课程成片。',
+  mount: '把卡片钉到关键时间点，导出 HTML 学习页与学习工作台。'
 };
 
 export function ProjectsPage() {

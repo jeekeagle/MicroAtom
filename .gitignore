@@ -5,3 +5,4 @@ release/
 packaging/.cache/
 *.log
 .DS_Store
+.deck-audit/

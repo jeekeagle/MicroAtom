@@ -3,9 +3,11 @@ import {
   ArrowLeft,
   ArrowRight,
   AudioLines,
+  Blocks,
   Check,
   Clapperboard,
   FilePenLine,
+  FileText,
   Layers3,
   LoaderCircle,
   MoreHorizontal,
@@ -18,6 +20,7 @@ import { formatDate, formatDuration, modeLabel, stageLabel, statusLabel } from '
 import type { CourseProject, StageKey } from '../types';
 import { ModeBadge, ProgressBar, StatusBadge } from '../components/ui';
 import { AudioStage } from '../components/studio/AudioStage';
+import { MountStage } from '../components/studio/MountStage';
 import { RenderStage } from '../components/studio/RenderStage';
 import { ScriptStage } from '../components/studio/ScriptStage';
 import { SlidesStage } from '../components/studio/SlidesStage';
@@ -26,7 +29,8 @@ const stages: Array<{ id: StageKey; label: string; short: string; icon: typeof F
   { id: 'script', label: '讲稿工坊', short: '讲稿', icon: FilePenLine },
   { id: 'slides', label: '课件工坊', short: '课件', icon: Layers3 },
   { id: 'audio', label: '声音与录制', short: '声音', icon: AudioLines },
-  { id: 'render', label: '成片交付', short: '成片', icon: Clapperboard }
+  { id: 'render', label: '成片交付', short: '成片', icon: Clapperboard },
+  { id: 'mount', label: '挂载与交互', short: '挂载', icon: Blocks }
 ];
 
 const stageIndex = (stage: StageKey) => stages.findIndex((item) => item.id === stage);
@@ -35,6 +39,10 @@ const isStageUnlocked = (project: CourseProject, stage: StageKey) => {
   if (stage === 'script') return true;
   if (stage === 'slides') return Boolean(project.script?.confirmed);
   if (stage === 'audio') return Boolean(project.script?.confirmed);
+  if (stage === 'mount') {
+    // 成片封版后才谈得上挂载；已经有卡片的旧项目仍然放行，别把人拦在门外。
+    return Boolean(project.render?.downloadReady) || Boolean(project.mounts?.length);
+  }
   return Boolean(project.slides.length && project.script?.confirmed);
 };
 
@@ -165,6 +173,7 @@ export function ProjectStudioPage() {
   }
 
   const currentStageIndex = stageIndex(stage);
+  const pdfWarnings = project.pdfImport?.warnings ?? [];
 
   return (
     <div className="studio-page">
@@ -209,7 +218,32 @@ export function ProjectStudioPage() {
         </div>
       </div>
 
+      {project.pdfImport && (
+        <div className="pdf-project-strip">
+          <FileText size={15} />
+          <span className="pdf-project-source" title={project.pdfImport.fileName}>
+            原讲义 · {project.pdfImport.fileName}
+          </span>
+          <span className="pdf-project-range">
+            第 {project.pdfImport.from}–{project.pdfImport.to} 页 · 共 {project.slides.length} 页课件
+          </span>
+          <span
+            className={`pdf-project-engine ${
+              project.pdfImport.scriptEngine === 'model' ? 'is-model' : 'is-fallback'
+            }`}
+          >
+            讲稿：{project.pdfImport.scriptEngine === 'model' ? '模型生成' : '页面文字兜底'}
+          </span>
+          {pdfWarnings.length > 0 && (
+            <span className="pdf-project-warn" title={pdfWarnings.join('\n')}>
+              {pdfWarnings.length} 条提示
+            </span>
+          )}
+        </div>
+      )}
+
       <nav className="studio-stage-nav" aria-label="课程生产阶段">
+
         {stages.map((item, index) => {
           const Icon = item.icon;
           const unlocked = isStageUnlocked(project, item.id);
@@ -217,7 +251,8 @@ export function ProjectStudioPage() {
             (item.id === 'script' && project.script?.confirmed) ||
             (item.id === 'slides' && project.slides.length > 0 && currentStageIndex > index) ||
             (item.id === 'audio' && project.recordings.length > 0 && currentStageIndex > index) ||
-            (item.id === 'render' && Boolean(project.render?.downloadReady));
+            (item.id === 'render' && Boolean(project.render?.downloadReady)) ||
+            (item.id === 'mount' && Boolean(project.mounts?.length));
           return (
             <button
               key={item.id}
@@ -229,7 +264,9 @@ export function ProjectStudioPage() {
                   notify(
                     item.id === 'slides'
                       ? '请先确认讲稿，再打开课件工坊'
-                      : '请先完成前置环节',
+                      : item.id === 'mount'
+                        ? '请先渲染出成片，再来挂载卡片'
+                        : '请先完成前置环节',
                     'info'
                   );
                   return;
@@ -278,6 +315,14 @@ export function ProjectStudioPage() {
           )}
           {stage === 'render' && (
             <RenderStage
+              project={project}
+              onProject={updateProject}
+              notify={notify}
+              onStage={changeStage}
+            />
+          )}
+          {stage === 'mount' && (
+            <MountStage
               project={project}
               onProject={updateProject}
               notify={notify}

@@ -37,7 +37,7 @@ export function SkillsPage() {
   const [query, setQuery] = useState('');
   const [expandedId, setExpandedId] = useState('');
   const [running, setRunning] = useState<AgentSkill | null>(null);
-  const [runInput, setRunInput] = useState('八年级物理，杠杆原理，8 分钟，突出证据意识。');
+  const [runInput, setRunInput] = useState('本科三年级，工具调用为什么会失败，8 分钟，要能分清是模型、工具还是任务定义的问题。');
   const [runLoading, setRunLoading] = useState(false);
   const [runOutput, setRunOutput] = useState('');
   const [runTrace, setRunTrace] = useState<TraceStep[]>([]);

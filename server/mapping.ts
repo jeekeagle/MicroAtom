@@ -189,6 +189,30 @@ const fallbackVisual = (
   };
 };
 
+/** 把讲稿口语切成可上课的短句，供页面直接使用。 */
+const narrationClauses = (narration: string): string[] => {
+  const cleaned = String(narration ?? '')
+    .replace(/\bundefined\b|\bNaN\b|null/gi, '')
+    .replace(/：\s*(?=[，。；])/g, '：')
+    .replace(/\s{2,}/g, ' ');
+  const sentences = cleaned
+    .split(/[。！？；!?;]/)
+    .map((item) => item.replace(/^[，、,\s]+/, '').trim())
+    .filter(Boolean);
+  const clauses: string[] = [];
+  for (const sentence of sentences) {
+    const text = sentence.replace(/^(现在|那么|于是|所以|其实|好，|接下来我们)/, '').trim();
+    if (text.length < 8) continue;
+    // 整句上屏可读性最好；过长时保留完整前半句并收尾，不切成碎片。
+    clauses.push(
+      text.length <= 56
+        ? text
+        : `${text.slice(0, 52).replace(/[，、：:]$/, '')}…`
+    );
+  }
+  return clauses;
+};
+
 export function reconcileSlides(
   slides: CourseSlide[],
   script: CourseScript,
@@ -226,6 +250,8 @@ export function reconcileSlides(
     const source =
       bySectionId.get(section.id) ??
       (role === 'cover' ? cover : role === 'objectives' ? objectiveSlide : role === 'summary' ? summary : undefined);
+    // 页面文字优先来自讲稿本身；视觉任务说明只留在讲述备注里。
+    const narrationBullets = narrationClauses(section.narration).slice(0, 3);
     const briefBullets = section.slideBrief
       .split(/[；。]/)
       .flatMap((item) => (item.includes('，') ? item.split('，') : [item]))
@@ -237,9 +263,11 @@ export function reconcileSlides(
     const bullets =
       inherited.length >= 2
         ? inherited
-        : briefBullets.length
-          ? briefBullets
-          : inherited;
+        : narrationBullets.length >= 2
+          ? narrationBullets
+          : briefBullets.length
+            ? briefBullets
+            : inherited;
     const layout =
       role === 'cover'
         ? 'cover'
@@ -264,12 +292,16 @@ export function reconcileSlides(
       layout,
       bullets,
       keyPoint:
-        source?.keyPoint ?? (role === 'content' ? section.purpose : undefined),
+        source?.keyPoint ??
+        (role === 'content' ? narrationClauses(section.narration)[0] : undefined),
       supporting: source?.supporting,
       ask: source?.ask,
       takeaway:
         source?.takeaway ?? (role === 'summary' ? script.summary : undefined),
       visual: source?.visual ?? fallbackVisual(bullets, role, section.purpose),
+      // PDF 导入页的图片与现成 HTML 必须原样带走，否则规整一遍就成了空白页。
+      pageImage: source?.pageImage,
+      html: source?.html,
       note: source?.note ?? section.purpose,
       accent:
         source?.accent ??
@@ -287,6 +319,9 @@ export function reconcileSlides(
  */
 export function reconcileProjectMapping(project: CourseProject): CourseProject {
   if (!project.script) return project;
+  // PDF 导入的课件是"原讲义第 N 页"，页码顺序和段落一一对应，
+  // 不能被封面/目标/总结那套结构重排，否则翻页顺序会和原件对不上。
+  if (project.pdfImport) return project;
   const script = reconcileScript(project.script, project.topic);
   const slides = project.slides.length
     ? reconcileSlides(project.slides, script, {

@@ -8,6 +8,7 @@ import {
   LayoutGrid,
   LoaderCircle,
   LockKeyhole,
+  MonitorPlay,
   RefreshCw,
   Save,
   Sparkles,
@@ -66,6 +67,7 @@ export function SlidesStage({ project, onProject, notify, onStage }: StageProps)
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [entering, setEntering] = useState(false);
+  const [decking, setDecking] = useState(false);
 
   const selectedIndex = Math.max(
     0,
@@ -168,6 +170,22 @@ export function SlidesStage({ project, onProject, notify, onStage }: StageProps)
     }
   };
 
+  const openDeck = async () => {
+    setDecking(true);
+    try {
+      const next = project.deck ? project : await api.projectAction(project.id, 'build-deck');
+      if (next !== project) onProject(next);
+      const url = next.deck?.url;
+      if (!url) throw new Error('放映课件尚未生成');
+      window.open(url, '_blank', 'noopener');
+      notify(`放映课件已就绪，共 ${next.deck?.slides ?? next.slides.length} 页`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : '无法打开放映课件', 'error');
+    } finally {
+      setDecking(false);
+    }
+  };
+
   const updateDraft = <K extends keyof CourseSlide>(key: K, value: CourseSlide[K]) => {
     setSlideDraft((current) => (current ? { ...current, [key]: value } : current));
   };
@@ -267,6 +285,15 @@ export function SlidesStage({ project, onProject, notify, onStage }: StageProps)
           </div>
         </div>
         <div className="stage-toolbar-actions">
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<MonitorPlay size={15} />}
+            loading={decking}
+            onClick={openDeck}
+          >
+            {project.deck ? '放映课件' : '生成放映'}
+          </Button>
           <Button
             variant="secondary"
             size="sm"

@@ -355,7 +355,7 @@ export function SlideVisualEditor({
                 <textarea
                   rows={3}
                   value={visual?.imagePrompt ?? ''}
-                  placeholder="例如：教室场景中三位同学围绕一张杠杆示意图讨论，无文字"
+                  placeholder="例如：屏幕上一条循环流程图，思考、调用、观察三步首尾相接，无文字"
                   onChange={(event) => patch({ imagePrompt: event.target.value })}
                 />
               </label>

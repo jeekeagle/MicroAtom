@@ -76,13 +76,33 @@ export function VideoFrameSettings({ value, onChange }: Props) {
   const [name, setName] = useState(draft.name);
   const previewRef = useRef<HTMLDivElement | null>(null);
   const draggingRef = useRef(false);
-
-  const updateDraft = (patch: Partial<VideoFrameScheme>) => {
-    setDraft((current) => ({ ...current, ...patch }));
-  };
+  const draftRef = useRef<VideoFrameScheme>(draft);
 
   const clamp = (value: number, min: number, max: number) =>
     Math.min(Math.max(value, min), max);
+
+  // 预览按课件 16:9 画出；圆形方案裁成正方形，纵向占位比 scale 更高，
+  // 不按这个算，圆形方案拖到底部会溢出一截。
+  const heightFraction = (scale: number, shape: VideoFrameShape) =>
+    shape === 'circle' ? scale * (16 / 9) : scale;
+
+  /** 把改动同步回"当前方案"，拖动一次就生效，不必再点保存方案。 */
+  const syncToActiveScheme = (next: VideoFrameScheme) => {
+    draftRef.current = next;
+    setDraft(next);
+    if (!config.schemes.some((item) => item.id === next.id)) return;
+    onChange({ ...config, schemes: config.schemes.map((item) => (item.id === next.id ? { ...item, ...next } : item)) });
+  };
+
+  const updateDraft = (patch: Partial<VideoFrameScheme>) => {
+    const next = { ...draftRef.current, ...patch };
+    // 改了大小之后原位置可能把画面顶出框外，按新尺寸收回来。
+    const size = clamp(Number(next.scale) || 0.25, 0.05, 1);
+    next.scale = size;
+    next.x = clamp(Number(next.x) || 0, 0, 1 - size);
+    next.y = clamp(Number(next.y) || 0, 0, 1 - heightFraction(size, next.shape));
+    syncToActiveScheme(next);
+  };
 
   const onPointerDown = (event: React.PointerEvent) => {
     draggingRef.current = true;
@@ -93,31 +113,49 @@ export function VideoFrameSettings({ value, onChange }: Props) {
     if (!draggingRef.current) return;
     const rect = previewRef.current?.getBoundingClientRect();
     if (!rect || rect.width === 0 || rect.height === 0) return;
-    const size = draft.scale;
+    const size = draftRef.current.scale;
+    const hFrac = heightFraction(size, draftRef.current.shape);
     const x = clamp((event.clientX - rect.left) / rect.width - size / 2, 0, 1 - size);
-    const y = clamp((event.clientY - rect.top) / rect.height - size / 2, 0, 1 - size);
-    setDraft((current) => ({ ...current, x, y }));
+    const y = clamp((event.clientY - rect.top) / rect.height - hFrac / 2, 0, 1 - hFrac);
+    const next = { ...draftRef.current, x, y };
+    draftRef.current = next;
+    setDraft(next);
   };
 
   const onPointerUp = () => {
+    if (!draggingRef.current) return;
     draggingRef.current = false;
+    // 松手才写回方案，拖动过程中不反复刷新设置。
+    syncToActiveScheme(draftRef.current);
+  };
+
+  const placeAt = (corner: 'tl' | 'tr' | 'bl' | 'br') => {
+    const size = draftRef.current.scale;
+    const hFrac = heightFraction(size, draftRef.current.shape);
+    updateDraft({
+      x: corner === 'tl' || corner === 'bl' ? 0 : 1 - size,
+      y: corner === 'tl' || corner === 'tr' ? 0 : 1 - hFrac
+    });
   };
 
   const persist = (next: VideoFrameConfig) => onChange({ ...next });
 
   const saveScheme = () => {
-    const trimmed = name.trim() || draft.name || '新方案';
-    const saved: VideoFrameScheme = { ...draft, name: trimmed, id: draft.id || makeId() };
+    const current = draftRef.current;
+    const trimmed = name.trim() || current.name || '新方案';
+    const saved: VideoFrameScheme = { ...current, name: trimmed, id: current.id || makeId() };
     const exists = config.schemes.some((item) => item.id === saved.id);
     const schemes = exists
       ? config.schemes.map((item) => (item.id === saved.id ? saved : item))
       : [...config.schemes, saved];
+    draftRef.current = saved;
     setDraft(cloneScheme(saved));
     setName(trimmed);
     persist({ ...config, schemes, activeSchemeId: saved.id });
   };
 
   const applyScheme = (scheme: VideoFrameScheme) => {
+    draftRef.current = cloneScheme(scheme);
     setDraft(cloneScheme(scheme));
     setName(scheme.name);
     persist({ ...config, activeSchemeId: scheme.id });
@@ -128,10 +166,13 @@ export function VideoFrameSettings({ value, onChange }: Props) {
   };
 
   const addScheme = () => {
-    const fresh: VideoFrameScheme = { ...draft, id: makeId(), name: '新方案' };
+    const fresh: VideoFrameScheme = { ...draftRef.current, id: makeId(), name: '新方案' };
+    draftRef.current = cloneScheme(fresh);
     setDraft(cloneScheme(fresh));
     setName('新方案');
-    persist({ ...config, activeSchemeId: fresh.id });
+    // 新方案要真的进列表，否则 activeSchemeId 指向一个不存在的方案，
+    // 预览会回落到第一个方案，看起来"怎么调都没用"。
+    persist({ ...config, schemes: [...config.schemes, fresh], activeSchemeId: fresh.id });
   };
 
   const removeScheme = (scheme: VideoFrameScheme) => {
@@ -141,7 +182,8 @@ export function VideoFrameSettings({ value, onChange }: Props) {
     const defaultSchemeId =
       config.defaultSchemeId === scheme.id ? (schemes[0]?.id ?? '') : config.defaultSchemeId;
     persist({ ...config, schemes, activeSchemeId, defaultSchemeId });
-    if (draft.id === scheme.id && schemes[0]) {
+    if (draftRef.current.id === scheme.id && schemes[0]) {
+      draftRef.current = cloneScheme(schemes[0]);
       setDraft(cloneScheme(schemes[0]));
       setName(schemes[0].name);
     }
@@ -164,6 +206,7 @@ export function VideoFrameSettings({ value, onChange }: Props) {
               left: `${draft.x * 100}%`,
               top: `${draft.y * 100}%`,
               width: `${draft.scale * 100}%`,
+              aspectRatio: draft.shape === 'circle' ? '1 / 1' : '16 / 9',
               borderRadius: radiusFor(draft.shape),
               border: borderCss(draft),
               boxShadow: shadowFor(draft)
@@ -173,8 +216,25 @@ export function VideoFrameSettings({ value, onChange }: Props) {
             <div className="frame-cam-inner">教师画面</div>
           </div>
         </div>
+        <div className="frame-corners">
+          <span>快速定位</span>
+          <div className="frame-chips">
+            <button className="frame-chip" onClick={() => placeAt('tl')}>
+              左上
+            </button>
+            <button className="frame-chip" onClick={() => placeAt('tr')}>
+              右上
+            </button>
+            <button className="frame-chip" onClick={() => placeAt('bl')}>
+              左下
+            </button>
+            <button className="frame-chip" onClick={() => placeAt('br')}>
+              右下
+            </button>
+          </div>
+        </div>
         <p className="frame-note">
-          方案会同时作用于教师试讲预览与最终成片中的画中画。位置与大小按课件比例保存。
+          拖动或点角位即写入当前方案，位置按课件画面比例保存，成片与这里看到的一致。
         </p>
       </div>
 
@@ -321,7 +381,7 @@ export function VideoFrameSettings({ value, onChange }: Props) {
           </span>
         </label>
         <span className="frame-saved-hint">
-          <Check size={13} /> 调整会即时反映在预览；记得点击页面右下角保存运行设置。
+          <Check size={13} /> 拖动与角位会直接写入当前方案，成片按这里的位置合成；确认后点页面右下角“保存运行设置”落盘。
         </span>
       </div>
     </div>

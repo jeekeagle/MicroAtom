@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   ArrowUpRight,
   AudioLines,
+  Blocks,
   Check,
   ChevronRight,
   CircleDashed,
@@ -44,14 +45,16 @@ const stageAgent: Record<StageKey, string> = {
   script: 'agent-design',
   slides: 'agent-slides',
   audio: 'agent-voice',
-  render: 'agent-edit'
+  render: 'agent-edit',
+  mount: 'agent-insight'
 };
 
 const stageIcon: Record<StageKey, typeof FilePenLine> = {
   script: FilePenLine,
   slides: Layers3,
   audio: AudioLines,
-  render: Clapperboard
+  render: Clapperboard,
+  mount: Blocks
 };
 
 const jobStatusLabel: Record<JobStatus, string> = {

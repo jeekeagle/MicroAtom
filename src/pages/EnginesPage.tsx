@@ -41,7 +41,7 @@ export function EnginesPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [running, setRunning] = useState(false);
-  const [runInput, setRunInput] = useState('杠杆原理：核心是动力臂与阻力臂平衡，学生容易混淆支点位置。');
+  const [runInput, setRunInput] = useState('工具调用失败：核心是参数、权限与回退三处，学生容易把模型输出当成系统执行结果。');
   const [runOutput, setRunOutput] = useState('');
 
   const [formName, setFormName] = useState('');

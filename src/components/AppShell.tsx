@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   AudioLines,
+  Blocks,
   Brain,
   Boxes,
   ChevronRight,
@@ -41,7 +42,8 @@ const primaryNav: NavItem[] = [
   { label: '讲稿工坊', to: '/projects?stage=script', icon: FilePenLine, matchQuery: 'script' },
   { label: '课件工坊', to: '/projects?stage=slides', icon: Layers3, matchQuery: 'slides' },
   { label: '声音与录制', to: '/projects?stage=audio', icon: AudioLines, matchQuery: 'audio' },
-  { label: '成片交付', to: '/projects?stage=render', icon: Clapperboard, matchQuery: 'render' }
+  { label: '成片交付', to: '/projects?stage=render', icon: Clapperboard, matchQuery: 'render' },
+  { label: '挂载与交互', to: '/projects?stage=mount', icon: Blocks, matchQuery: 'mount' }
 ];
 
 const platformNav: NavItem[] = [

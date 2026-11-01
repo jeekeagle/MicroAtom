@@ -123,7 +123,12 @@ export function localConceptAnchors(project: CourseProject): ConceptAnchor[] {
   return anchors.sort((a, b) => a.atSeconds - b.atSeconds);
 }
 
-const buildAnchorMessages = (project: CourseProject, segments: ReturnType<typeof transcriptSegments>) => {
+const buildAnchorMessages = (
+  project: CourseProject,
+  segments: ReturnType<typeof transcriptSegments>,
+  agentLine = '',
+  memoryLine = ''
+) => {
   const list = segments
     .map(
       (segment, index) =>
@@ -136,7 +141,10 @@ const buildAnchorMessages = (project: CourseProject, segments: ReturnType<typeof
       role: 'system' as const,
       content:
         '你是微课概念定位助手。请在逐字稿中找出值得挂载介质的教学概念，并给出精确时间点。' +
-        '只输出 JSON，不要解释，不要编造逐字稿里没有的内容。'
+        '只输出 JSON，不要解释，不要编造逐字稿里没有的内容。' +
+        '优先选“学生需要停下来判断一次”的时刻：机制切换、能力边界、失败归因，而不是随便一个名词。' +
+        (agentLine ? `\n\n${agentLine}` : '') +
+        (memoryLine ? `\n\n${memoryLine}` : '')
     },
     {
       role: 'user' as const,
@@ -161,7 +169,9 @@ ${list}
  */
 export async function locateConceptAnchors(
   project: CourseProject,
-  settings: RuntimeSettings
+  settings: RuntimeSettings,
+  agentLine = '',
+  memoryLine = ''
 ): Promise<{ anchors: ConceptAnchor[]; source: 'model' | 'local-fallback'; warning?: string }> {
   const segments = transcriptSegments(project, activeRecording(project));
   if (!segments.length) {
@@ -169,7 +179,7 @@ export async function locateConceptAnchors(
   }
   try {
     const response = await callModel(settings, {
-      messages: buildAnchorMessages(project, segments),
+      messages: buildAnchorMessages(project, segments, agentLine, memoryLine),
       json: true,
       temperature: 0.3,
       maxTokens: 1600
@@ -285,7 +295,9 @@ export function buildCourseHtml(project: CourseProject, mounts: CourseMount[]): 
     accent: (kindAccent[mount.mediaKind] ?? kindAccent['concept-card']).accent,
     soft: (kindAccent[mount.mediaKind] ?? kindAccent['concept-card']).soft,
     tag: (kindAccent[mount.mediaKind] ?? kindAccent['concept-card']).tag,
-    html: inlineArtifactHtml(mount.html)
+    // html 是去样式的片段（放进共享页面不污染），doc 是原文档（进 iframe 时保持原设计）
+    html: inlineArtifactHtml(mount.html),
+    doc: mount.html
   }));
 
   const html = `<!doctype html>
@@ -310,6 +322,19 @@ button{font:inherit;color:inherit}
 .screen-empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:#cbd5df;text-align:center;padding:24px}
 .screen-empty strong{font-size:16px;color:#e6edf3}
 .screen-empty span{font-size:12px;max-width:420px;line-height:1.7}
+.float{position:absolute;z-index:5;display:none;flex-direction:column;background:#fff;border-radius:8px;box-shadow:0 16px 42px rgba(8,14,20,.34);overflow:hidden;border:1px solid rgba(255,255,255,.14)}
+.float.is-open{display:flex;animation:floatIn .22s ease-out}
+@keyframes floatIn{from{opacity:0}to{opacity:1}}
+.float.placement-below{left:4%;bottom:6%;width:44%;height:54%}
+.float.placement-side{right:4%;top:50%;transform:translateY(-50%);width:42%;height:76%}
+.float.placement-focus{left:50%;top:50%;transform:translate(-50%,-50%);width:58%;height:72%;box-shadow:0 0 0 2000px rgba(8,14,20,.5),0 24px 60px rgba(0,0,0,.4)}
+.float-head{display:flex;align-items:center;gap:6px;flex:none;padding:7px 10px;background:#f6f7f9;border-bottom:1px solid #e8ecef}
+.float-head span{flex:none;color:var(--accent);font-size:9px;font-weight:700;letter-spacing:.08em}
+.float-head strong{min-width:0;font-size:11px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.float-head em{margin-left:auto;flex:none;color:var(--muted);font-style:normal;font:600 9px/1 ui-monospace,Consolas,monospace}
+.float iframe{flex:1;width:100%;border:0;background:#fff}
+.float-open{margin-left:6px;flex:none;padding:3px 8px;border:1px solid var(--line);background:#fff;border-radius:3px;font-size:10px;cursor:pointer}
+@media (max-width:720px){.float.placement-below,.float.placement-side{left:4%;right:4%;width:auto;height:56%;top:auto;bottom:5%;transform:none}}
 .transport{display:flex;align-items:center;gap:12px;margin-top:12px;padding:10px 14px;background:#fff;border:1px solid var(--line);border-radius:6px}
 .transport button{width:40px;height:40px;border-radius:50%;border:none;background:var(--accent);color:#fff;font-size:15px;cursor:pointer}
 .transport .time{font:600 12px/1 ui-monospace,Consolas,monospace;color:var(--muted);min-width:104px}
@@ -363,6 +388,15 @@ button{font:inherit;color:inherit}
         ? `<video id="player" src="../render/course.mp4"${hasPoster ? ' poster="../render/poster.png"' : ''} preload="metadata"></video>`
         : `<video id="player" src="../render/course.mp4" preload="metadata" style="display:none"></video><img id="slideImage" alt="课件画面"><div class="screen-empty" id="screenEmpty"><strong>还没有渲染成片</strong><span>在成片交付环节渲染 1080p 视频后，这里会播放课程画面；现在先用音频与卡片体验课程结构。</span></div>`
     }
+    <div class="float" id="float">
+      <div class="float-head">
+        <span id="floatTag"></span>
+        <strong id="floatTitle"></strong>
+        <em id="floatTime"></em>
+        <button class="float-open" id="floatOpen" type="button">展开</button>
+      </div>
+      <iframe id="floatFrame" title="介质卡片" sandbox="allow-same-origin"></iframe>
+    </div>
   </section>
 
   <div class="transport">
@@ -423,13 +457,59 @@ const currentTime = () => (media ? media.currentTime || 0 : 0);
 const currentDuration = () => (media && media.duration ? media.duration : ${durationSeconds});
 
 const mountAt = (time) => {
-  let found = null;
   for (const mount of MOUNTS) {
-    if (mount.at <= time + 0.2) found = mount;
-    else break;
+    if (time + 0.2 >= mount.at && time < mount.end) return mount;
   }
-  return found;
+  return null;
 };
+
+// 浮层卡片与编辑台同源：同一份 HTML，同一套排版参数。
+const CARD_DOC =
+  '<style>' +
+  'html,body{margin:0;background:#fff;color:#16202b}' +
+  'body{padding:14px 16px;font-family:"Microsoft YaHei UI","PingFang SC",sans-serif;font-size:12.5px;line-height:1.65}' +
+  '*{box-sizing:border-box;max-width:100%}' +
+  'h1,h2,h3{margin:0 0 6px;line-height:1.45}h1{font-size:17px}h2{font-size:15px}h3{font-size:13.5px}h4{margin:0 0 4px;font-size:12.5px}' +
+  'p,li{font-size:12.5px;margin:0 0 5px;color:#2b3641}' +
+  'ul,ol{padding-left:17px;margin:4px 0}' +
+  'svg{max-width:100%;height:auto;display:block}' +
+  'table{width:100%;border-collapse:collapse;font-size:12px}' +
+  'td,th{border-bottom:1px solid #e6eaee;padding:4px 6px;text-align:left}' +
+  '</style>';
+
+// 卡片若已是完整文档，只补一层适配：省掉和视频重复的课程页眉。
+const MOUNT_FIT =
+  '<style>html,body{background:#fff}body{padding:13px 15px}.card{max-width:none}' +
+  '.card-head{display:none}.card-face{border:none;box-shadow:none;padding:0;border-radius:0}</style>';
+
+const floatBox = document.getElementById('float');
+const floatFrame = document.getElementById('floatFrame');
+const floatTag = document.getElementById('floatTag');
+const floatTitle = document.getElementById('floatTitle');
+const floatTime = document.getElementById('floatTime');
+const floatOpen = document.getElementById('floatOpen');
+let floatId = '';
+let liveMount = null;
+
+const paintFloat = (mount) => {
+  liveMount = mount;
+  if (!mount) {
+    floatBox.className = 'float';
+    floatId = '';
+    return;
+  }
+  floatBox.className = 'float is-open placement-' + (mount.placement || 'below');
+  floatBox.style.setProperty('--accent', mount.accent);
+  if (floatId === mount.id) return;
+  floatId = mount.id;
+  floatTag.textContent = mount.tag;
+  floatTitle.textContent = mount.title;
+  floatTime.textContent = fmt(mount.at) + ' → ' + fmt(mount.end);
+  const raw = mount.doc || mount.html || '';
+  floatFrame.srcdoc = /<!doctype|<html[\s>]/i.test(raw) ? raw + MOUNT_FIT : CARD_DOC + raw;
+};
+
+floatOpen.addEventListener('click', () => openMount(liveMount));
 
 const showSlide = (time) => {
   if (!slideImage) return;
@@ -450,6 +530,7 @@ const paint = () => {
   seek.value = String(time);
   showSlide(time);
   const mount = mountAt(time);
+  paintFloat(mount);
   const id = mount ? mount.id : '';
   if (id !== activeId) {
     activeId = id;
@@ -457,7 +538,11 @@ const paint = () => {
       card.classList.toggle('is-active', card.dataset.mount === id);
     });
     const active = rail.querySelector('.rail-card.is-active');
-    if (active) active.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    if (active) {
+      // 只横向滚动卡片条，别把整个页面拽下去。
+      const target = active.offsetLeft - (rail.clientWidth - active.clientWidth) / 2;
+      rail.scrollTo({ left: Math.max(0, target), behavior: 'smooth' });
+    }
   }
   if (!mount) {
     now.className = 'now is-empty';
@@ -535,7 +620,9 @@ const buildCardMessages = (
   project: CourseProject,
   kind: MediaKind,
   count: number,
-  segments: ReturnType<typeof transcriptSegments>
+  segments: ReturnType<typeof transcriptSegments>,
+  agentLine = '',
+  memoryLine = ''
 ) => {
   const list = segments
     .map(
@@ -560,7 +647,10 @@ const buildCardMessages = (
       role: 'system' as const,
       content:
         '你是交互学习设计师，为微课生成可以放进课程时间轴的互动卡片。' +
-        '只输出 JSON，不要 Markdown，不要解释。内容必须来自讲稿，不要编造事实。'
+        '只输出 JSON，不要 Markdown，不要解释。内容必须来自讲稿，不要编造事实。' +
+        '卡片只考“会不会判断”，不考“记不记得”：干扰项必须是真实误区，解析要回到讲稿里那句话。' +
+        (agentLine ? `\n\n${agentLine}` : '') +
+        (memoryLine ? `\n\n${memoryLine}` : '')
     },
     {
       role: 'user' as const,
@@ -587,7 +677,9 @@ ${fieldHint[kind] ?? ''}
 export async function generateInteractiveCards(
   project: CourseProject,
   settings: RuntimeSettings,
-  options: { kind: MediaKind; count?: number }
+  options: { kind: MediaKind; count?: number },
+  agentLine = '',
+  memoryLine = ''
 ): Promise<{
   contents: Array<CardContent & { atSeconds: number }>;
   source: 'model' | 'local-fallback';
@@ -598,7 +690,7 @@ export async function generateInteractiveCards(
   const sections = project.script?.sections ?? [];
   try {
     const response = await callModel(settings, {
-      messages: buildCardMessages(project, options.kind, count, segments),
+      messages: buildCardMessages(project, options.kind, count, segments, agentLine, memoryLine),
       json: true,
       temperature: 0.4,
       maxTokens: 2200

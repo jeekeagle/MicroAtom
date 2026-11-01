@@ -36,7 +36,8 @@ export const stageLabel: Record<StageKey, string> = {
   script: '讲稿',
   slides: '课件',
   audio: '声音与录制',
-  render: '成片'
+  render: '成片',
+  mount: '挂载与交互'
 };
 
 export const statusLabel: Record<ProjectStatus, string> = {

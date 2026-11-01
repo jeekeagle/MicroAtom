@@ -1,6 +1,7 @@
 import express from 'express';
 import type { NextFunction, Request as ExpressRequest, Response as ExpressResponse } from 'express';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import https from 'node:https';
 import path from 'node:path';
 import type {
@@ -16,6 +17,7 @@ import type {
   GenerationMeta,
   MediaKind,
   MediaTriggerPlacement,
+  PdfImportMeta,
   ProductionEngine,
   ProductionStage,
   RecordingAsset,
@@ -52,11 +54,13 @@ import {
 } from './llm';
 import {
   detectCapabilities,
+  findChromePath,
   findProjectAudio,
   mediaRoot,
   mediaUrl,
   describeRecordingFile,
   describeTeacherVideoFile,
+  projectMediaDir,
   renderCourseVideo,
   saveRecordingBuffer,
   saveRecordingFile,
@@ -78,7 +82,7 @@ import {
   MOUNT_KIND_LABEL
 } from './course-composer';
 import { renderInteractiveCard } from './interactive-cards';
-import { dataDir, distRoot } from './paths';
+import { appRoot, dataDir, distRoot } from './paths';
 import {
   generateScriptWithModel,
   generateSlidesWithModel,
@@ -87,6 +91,17 @@ import {
   runSkillWithModel
 } from './skills';
 import { buildWhiteSlideHtml } from './slide-html';
+import { buildDeckSlideHtml, writeDeck, clearPageImageCache } from './deck';
+import {
+  buildPdfNarration,
+  buildPdfScript,
+  buildPdfSlide,
+  openPdfSession,
+  pageImageName,
+  renderPdfPages
+} from './pdf-import';
+import { reconcileSlides } from './mapping';
+import { agentBrief, memoryBrief } from './briefs';
 import { mutateDb, readDb, resetDb, writeDb } from './store';
 import { testMimoSpeech, transcribeMimoAudio } from './speech';
 import { buildCourseTimeline } from './timeline';
@@ -128,10 +143,35 @@ const httpsEnabled = fs.existsSync(tlsCertPath) && fs.existsSync(tlsKeyPath);
 app.use(express.json({ limit: '80mb' }));
 app.use('/media', express.static(mediaRoot, { acceptRanges: true, maxAge: '1h' }));
 
+// PDF 页面渲染用的静态资源：pdfjs 本体与渲染页。
+const pdfjsAssetRoot = (() => {
+  try {
+    return path.dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json'));
+  } catch {
+    return '';
+  }
+})();
+if (pdfjsAssetRoot) {
+  app.use('/pdfjs', express.static(pdfjsAssetRoot, { maxAge: '1d' }));
+}
+app.get('/pdfkit/pdf-view', (_req, res) => {
+  res.sendFile(path.join(appRoot, 'server', 'pdf-view.html'));
+});
+
 const makeId = (prefix: string) =>
   `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 
 const now = () => new Date().toISOString();
+
+/**
+ * 卡片出现时要不要把视频停下来。
+ * 要学生动手的（题、自检、挑战、反例）默认停；补充说明类的默认边播边看。
+ */
+const defaultHoldForMount = (kind: MediaKind) =>
+  kind === 'quiz' ||
+  kind === 'checklist' ||
+  kind === 'challenge' ||
+  kind === 'counterexample';
 
 const findProject = (id: string) => {
   const project = readDb().projects.find((item) => item.id === id);
@@ -139,13 +179,251 @@ const findProject = (id: string) => {
   return project;
 };
 
+/**
+ * 页面 HTML 是"看到什么就录什么"的唯一依据：工作台预览、试讲浮层、成片截图都读它。
+ *
+ * 这里只补空值，不覆盖已有内容——不同课件引擎产出的版式不同，
+ * 覆盖就等于把用户选的版式换掉，预览和成片反而会再次分叉。
+ */
+const ensureSlideHtml = (project: CourseProject) => {
+  if (!project.slides?.length) return false;
+  const total = project.slides.length;
+  let changed = false;
+  const next = project.slides.map((slide) => {
+    if (slide.html && slide.html.trim()) return slide;
+    changed = true;
+    return { ...slide, html: buildDeckSlideHtml(slide, project, total) };
+  });
+  if (changed) project.slides = next;
+  return changed;
+};
+
 const persistProject = (project: CourseProject) => {
   project.updatedAt = now();
+  if (ensureSlideHtml(project) && project.deck) {
+    // 页面内容变了，整册放映稿也必须跟着变，否则放映会和预览再次分叉。
+    const deck = writeDeck(project);
+    project.deck = {
+      ...project.deck,
+      url: deck.url,
+      slides: deck.slides,
+      bytes: deck.bytes,
+      generatedAt: now()
+    };
+  }
   mutateDb((db) => {
     const index = db.projects.findIndex((item) => item.id === project.id);
     if (index >= 0) db.projects[index] = project;
   });
 };
+
+/* ------------------------------------------------------------
+   PDF 转逐页课件
+   ------------------------------------------------------------ */
+
+/** 单次导入的页数上限。再多就不是微课，是一整本书。 */
+const PDF_MAX_PAGES = 60;
+/** 暂存文件保留半小时，够老师慢慢选页码范围。 */
+const PDF_UPLOAD_TTL = 30 * 60 * 1000;
+
+interface PdfUpload {
+  token: string;
+  file: string;
+  name: string;
+  size: number;
+  pageCount: number;
+  createdAt: number;
+  /** 已经被某次导入取走，防止连点两次重复转换。 */
+  locked?: boolean;
+}
+
+const pdfUploads = new Map<string, PdfUpload>();
+
+const pdfTmpDir = () => {
+  const dir = path.join(dataDir, 'pdf-tmp');
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+};
+
+const sweepPdfUploads = () => {
+  const stamp = Date.now();
+  for (const [token, upload] of pdfUploads) {
+    if (stamp - upload.createdAt < PDF_UPLOAD_TTL) continue;
+    pdfUploads.delete(token);
+    try {
+      fs.rmSync(upload.file, { force: true });
+    } catch {
+      // 删不掉就留着，系统重启时会清空临时目录。
+    }
+  }
+};
+
+interface PdfImportPlan {
+  from: number;
+  to: number;
+  secondsPerPage: number;
+  generateScript: boolean;
+}
+
+/**
+ * 导入流水线：渲染原页 → 逐页讲稿 → 单页/整册 HTML。
+ *
+ * 全程异步，进度写回 project.pdfImport，前端轮询项目接口就能看到走到哪一步。
+ * 每一步都先落盘再更新进度，中途崩了也不会留下"半页课件却说已完成"的状态。
+ */
+async function runPdfImport(projectId: string, upload: PdfUpload, plan: PdfImportPlan) {
+  const project = findProject(projectId);
+  const targetDir = projectMediaDir(projectId);
+  const slidesDir = path.join(targetDir, 'slides');
+  fs.mkdirSync(slidesDir, { recursive: true });
+  fs.copyFileSync(upload.file, path.join(targetDir, 'source.pdf'));
+
+  let lastFlush = 0;
+  const flush = (progress: number, message: string, force = false) => {
+    const stamp = Date.now();
+    if (!force && stamp - lastFlush < 500) return;
+    lastFlush = stamp;
+    project.pdfImport = {
+      ...(project.pdfImport as PdfImportMeta),
+      progress,
+      message,
+      status: 'running'
+    };
+    project.progress = Math.min(95, Math.max(project.progress, 18 + Math.round(progress * 0.55)));
+    persistProject(project);
+  };
+
+  let session: Awaited<ReturnType<typeof openPdfSession>> | undefined;
+  try {
+    session = await openPdfSession(fs.readFileSync(upload.file));
+    const total = plan.to - plan.from + 1;
+    flush(8, `读取 PDF（第 ${plan.from}-${plan.to} 页）`, true);
+    const pages = await session.readPages(plan.from, plan.to);
+    if (!pages.length) throw new Error('选中的页码范围内没有内容');
+
+    // 页面骨架先建好，后面每一步都以它为唯一依据。
+    project.slides = pages.map((page, order) =>
+      buildPdfSlide({ page, order, total: pages.length, seconds: plan.secondsPerPage })
+    );
+    project.script = undefined;
+    project.render = undefined;
+    project.timeline = undefined;
+    project.recordings = [];
+    project.mounts = [];
+    project.deck = undefined;
+    await session.dispose();
+    session = undefined;
+
+    // 原页渲染交给浏览器做，几十页只需起一次浏览器。
+    const chrome = findChromePath();
+    if (!chrome) throw new Error('未找到可用于渲染 PDF 的 Chrome 或 Edge');
+    const origin = `http://127.0.0.1:${process.env.PORT || 8787}`;
+    let rendered = 0;
+    await renderPdfPages({
+      baseUrl: origin,
+      pdfUrl: mediaUrl(projectId, 'source.pdf'),
+      chrome,
+      pages: pages.map((page) => page.index),
+      onPage: (index, png) => {
+        fs.writeFileSync(path.join(slidesDir, pageImageName(index)), png);
+      },
+      onProgress: (done, total) => {
+        rendered = done;
+        flush(8 + Math.round((done / total) * 54), `生成原页画面 ${done}/${total}`);
+      }
+    });
+    if (!rendered) throw new Error('没有生成任何页面画面');
+
+    if (plan.generateScript) {
+      flush(66, '正在写逐页口播稿', true);
+      const settings = readDb().settings;
+      const narration = await buildPdfNarration(
+        {
+          pages,
+          topic: project.topic,
+          subject: project.subject,
+          grade: project.grade,
+          secondsPerPage: plan.secondsPerPage
+        },
+        settings
+      );
+      const script = buildPdfScript(project, narration.sections);
+      // 逐页讲稿跟着 PDF 走，默认视为已确认；老师改完可以再确认一次。
+      script.confirmed = true;
+      project.script = script;
+      project.pdfImport = {
+        ...(project.pdfImport as PdfImportMeta),
+        scriptEngine: narration.engine,
+        warnings: narration.warnings
+      };
+    }
+
+    flush(84, '生成课件页面', true);
+    clearPageImageCache(projectId);
+    const totalSlides = project.slides.length;
+    project.slides = project.slides.map((slide) => ({
+      ...slide,
+      html: buildDeckSlideHtml(slide, project, totalSlides)
+    }));
+    const deck = writeDeck(project);
+    project.deck = {
+      url: deck.url,
+      slides: deck.slides,
+      bytes: deck.bytes,
+      engine: 'pdf-import',
+      generatedAt: now()
+    };
+    // 页面和讲稿都已经就位，下一步就是配音，所以直接落在课件这一步。
+    project.stage = 'slides';
+    project.status = 'review';
+    project.progress = 62;
+    project.trace = makeTrace(project).map((step, index) =>
+      index === 2
+        ? {
+            ...step,
+            detail: `按 PDF 原页生成 ${totalSlides} 页课件 · 逐页口播稿`,
+            engine: project.pdfImport?.scriptEngine === 'model' ? 'model' : 'local-fallback',
+            warnings: project.pdfImport?.warnings ?? []
+          }
+        : step
+    );
+    project.pdfImport = {
+      ...(project.pdfImport as PdfImportMeta),
+      status: 'ready',
+      progress: 100,
+      message: `已生成 ${totalSlides} 页课件`
+    };
+    persistProject(project);
+    mutateDb((db) => {
+      db.activity.unshift({
+        id: makeId('act'),
+        agent: '析课',
+        action: `PDF 转课件（${totalSlides} 页）`,
+        target: project.title,
+        time: '刚刚',
+        status: 'done'
+      });
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'PDF 解析失败';
+    project.pdfImport = {
+      ...(project.pdfImport as PdfImportMeta),
+      status: 'error',
+      message
+    };
+    project.status = 'draft';
+    persistProject(project);
+    logCrash('pdf-import', error);
+  } finally {
+    await session?.dispose();
+    pdfUploads.delete(upload.token);
+    try {
+      fs.rmSync(upload.file, { force: true });
+    } catch {
+      // 临时文件删不掉不影响结果。
+    }
+  }
+}
 
 const workflowForProject = (project: CourseProject) => {
   const db = readDb();
@@ -182,11 +460,29 @@ const makeTrace = (project: CourseProject) => {
   }));
 };
 
+/**
+ * 渲染失败的原因要直接给老师看，所以系统级的拦截得翻译成人话，
+ * 不能把一坨 JSON 甩到界面上（真发生过：安全策略的返回被当成渲染错误显示）。
+ */
+const describeRenderError = (error: unknown) => {
+  const raw = error instanceof Error ? error.message : '成片渲染失败';
+  if (raw.includes('SAFE_DELETE') || raw.includes('safe-delete')) {
+    return '写文件时被系统安全策略拦下（短时间内删除动作过多）。等一会儿再点一次生成即可，已生成的课件画面会复用。';
+  }
+  return raw.length > 400 ? `${raw.slice(0, 400)}…` : raw;
+};
+
 const invalidateProduction = (project: CourseProject) => {
   project.render = undefined;
   project.delivery = undefined;
   if (project.script) project.script.confirmed = false;
 };
+
+/** 讲稿正文的指纹：改稿前后比一比，就知道旧旁白还算不算数。 */
+const narrationText = (script?: CourseScript) =>
+  (script?.sections ?? [])
+    .map((section) => `${section.title}\u0001${section.narration}`)
+    .join('\u0002');
 
 /**
  * Engine config is a light-weight post-processing contract: each slide engine
@@ -256,6 +552,14 @@ const publicSettings = () => {
 };
 
 const subjectHints = [
+  '人工智能',
+  '智能体',
+  '机器学习',
+  '深度学习',
+  '计算机',
+  '软件工程',
+  '数据科学',
+  '信息技术',
   '语文',
   '数学',
   '英语',
@@ -267,14 +571,13 @@ const subjectHints = [
   '政治',
   '道德与法治',
   '科学',
-  '信息技术',
   '音乐',
   '美术',
   '体育'
 ];
 
 const gradePattern =
-  /(高[一二三]|初[一二三]|[一二三四五六七八九]年级|小学[一二三四五六]年级|七年级|八年级|九年级)/;
+  /(本科|专科|研究生|硕士|博士|大[一二三四]|高[一二三]|初[一二三]|[一二三四五六七八九]年级|小学[一二三四五六]年级|七年级|八年级|九年级)/;
 
 const clampBriefDuration = (value: unknown, fallback = 8) => {
   const parsed = Number(value);
@@ -400,6 +703,15 @@ const refreshTimeline = (project: CourseProject, preferredAudioId?: string) => {
   return project.timeline;
 };
 
+/**
+ * 列表接口只给"够显示卡片"的数据。页面 HTML 动辄几十上百 KB，
+ * PDF 导入项目一页就是一张图，整包塞进首页会让加载卡住几秒。
+ */
+const forList = (project: CourseProject): CourseProject => ({
+  ...project,
+  slides: project.slides.map((slide) => ({ ...slide, html: undefined }))
+});
+
 app.get('/api/bootstrap', (_req, res) => {
   const db = readDb();
   const stats = {
@@ -410,7 +722,7 @@ app.get('/api/bootstrap', (_req, res) => {
     minutesSaved: 286
   };
   res.json({
-    projects: db.projects,
+    projects: db.projects.map(forList),
     agents: db.agents,
     skills: db.skills,
     engines: db.engines,
@@ -445,6 +757,10 @@ app.patch('/api/memory', (req, res) => {
     teachingStyle: text(body.teachingStyle, current.teachingStyle),
     experience: text(body.experience, current.experience),
     insights: text(body.insights, current.insights),
+    methodology: text(body.methodology, current.methodology ?? ''),
+    casePool: text(body.casePool, current.casePool ?? ''),
+    boundaries: text(body.boundaries, current.boundaries ?? ''),
+    assessment: text(body.assessment, current.assessment ?? ''),
     updatedAt: now()
   };
   db.memory = next;
@@ -551,11 +867,7 @@ app.post('/api/projects/analyze-brief', async (req, res) => {
         },
         {
           role: 'user',
-          content: `教师的长期记忆：
-学科：${memory.subject}｜学段：${memory.grade}｜教龄：${memory.yearsExperience} 年
-讲述风格：${memory.teachingStyle}
-教学经验：${memory.experience}
-教学心得：${memory.insights}
+          content: `${memoryBrief(memory)}
 
 教师口述：
 ${transcript}
@@ -631,6 +943,171 @@ valueGuide 与 learnerProfile 必须有实质内容，不能写"无"或留空。
   }
 });
 
+/* ------------------------------------------------------------
+   PDF 导入接口
+   ------------------------------------------------------------ */
+
+/** 选文件后先解析一次：拿到页数和每页标题，老师据此挑页码范围。 */
+app.post('/api/pdf/inspect', express.raw({ type: () => true, limit: '300mb' }), async (req, res) => {
+  const buffer = req.body as Buffer;
+  if (!Buffer.isBuffer(buffer) || buffer.length < 256) {
+    res.status(400).json({ error: '请选择一个 PDF 文件' });
+    return;
+  }
+  // 先看文件头，避免把改名的 docx 当 PDF 送进解析器。
+  if (buffer.subarray(0, 5).toString('latin1') !== '%PDF-') {
+    res.status(400).json({ error: '这不是有效的 PDF 文件，请换一份' });
+    return;
+  }
+  const rawName = String(req.query.name ?? req.headers['x-file-name'] ?? 'import.pdf');
+  const fileName = (() => {
+    try {
+      return decodeURIComponent(rawName);
+    } catch {
+      return rawName;
+    }
+  })();
+  try {
+    sweepPdfUploads();
+    const session = await openPdfSession(buffer);
+    try {
+      const pageCount = session.pageCount;
+      const pages = await session.readPages(1, Math.min(pageCount, 30));
+      const token = makeId('pdf');
+      const file = path.join(pdfTmpDir(), `${token}.pdf`);
+      fs.writeFileSync(file, buffer);
+      pdfUploads.set(token, {
+        token,
+        file,
+        name: fileName,
+        size: buffer.length,
+        pageCount,
+        createdAt: Date.now()
+      });
+      res.json({
+        token,
+        fileName,
+        pageCount,
+        sizeBytes: buffer.length,
+        preview: pages.map((page) => ({
+          index: page.index,
+          title: page.title,
+          chars: page.text.length
+        }))
+      });
+    } finally {
+      await session.dispose();
+    }
+  } catch (error) {
+    res.status(400).json({
+      error: `PDF 解析失败：${error instanceof Error ? error.message : '文件可能已损坏'}`
+    });
+  }
+});
+
+/** 建课程并开始转换。转换在后台跑，进度看项目里的 pdfImport。 */
+app.post('/api/projects/import-pdf', (req, res) => {
+  const body = (req.body || {}) as {
+    token?: string;
+    title?: string;
+    subject?: string;
+    grade?: string;
+    from?: number;
+    to?: number;
+    secondsPerPage?: number;
+    generateScript?: boolean;
+  };
+  const upload = pdfUploads.get(String(body.token || ''));
+  if (!upload) {
+    res.status(400).json({ error: '文件已过期，请重新选择 PDF' });
+    return;
+  }
+  if (upload.locked) {
+    res.status(409).json({ error: '这份 PDF 正在转换，请稍候' });
+    return;
+  }
+  upload.locked = true;
+
+  const clampPage = (value: unknown, fallback: number, min: number, max: number) => {
+    const parsed = Math.floor(Number(value));
+    if (!Number.isFinite(parsed)) return Math.min(max, Math.max(min, fallback));
+    return Math.min(max, Math.max(min, parsed));
+  };
+  const from = clampPage(body.from, 1, 1, upload.pageCount);
+  // 没传结束页就当作「整份导入」：页数由 PDF 本身决定，不预设 12 页之类的默认值。
+  const to = clampPage(
+    body.to,
+    Math.min(upload.pageCount, from + PDF_MAX_PAGES - 1),
+    from,
+    Math.min(upload.pageCount, from + PDF_MAX_PAGES - 1)
+  );
+  const secondsPerPage = clampPage(body.secondsPerPage, 45, 20, 180);
+  const fallbackTitle = upload.name.replace(/\.pdf$/i, '').trim() || 'PDF 导入课件';
+  const title = String(body.title || '').trim() || fallbackTitle;
+  const db = readDb();
+  const workflow = defaultWorkflowForMode(db.workflows, 'ppt') ?? db.workflows[0];
+  const first = workflow ? firstWorkflowStep(workflow) : undefined;
+  const project: CourseProject = {
+    id: makeId('project'),
+    workflowId: workflow?.id ?? 'workflow-auto-default',
+    workflowStepId: first?.id,
+    title,
+    topic: title,
+    subject: String(body.subject || '').trim() || '通识',
+    grade: String(body.grade || '').trim() || '未设置学段',
+    durationMinutes: Math.min(
+      45,
+      Math.max(3, Math.round(((to - from + 1) * secondsPerPage) / 60))
+    ),
+    mode: 'ppt',
+    status: 'producing',
+    stage: 'slides',
+    progress: 12,
+    idea: `导入自 ${upload.name}，第 ${from}-${to} 页`,
+    valueGuide: '',
+    learnerProfile: '',
+    style: '照原讲义逐页讲解',
+    slides: [],
+    recordings: [],
+    artifacts: [],
+    selectedEngines: {},
+    pdfImport: {
+      fileName: upload.name,
+      pageCount: upload.pageCount,
+      from,
+      to,
+      status: 'running',
+      progress: 2,
+      message: '准备转换',
+      sourceUrl: '',
+      importedAt: now()
+    },
+    trace: [],
+    createdAt: now(),
+    updatedAt: now(),
+    coverTone: 'ink'
+  };
+  project.pdfImport!.sourceUrl = mediaUrl(project.id, 'source.pdf');
+  mutateDb((db) => {
+    db.projects.unshift(project);
+    db.activity.unshift({
+      id: makeId('act'),
+      agent: '析课',
+      action: `导入 PDF 转课件（${to - from + 1} 页）`,
+      target: project.title,
+      time: '刚刚',
+      status: 'running'
+    });
+  });
+  res.status(201).json(project);
+  void runPdfImport(project.id, upload, {
+    from,
+    to,
+    secondsPerPage,
+    generateScript: body.generateScript !== false
+  });
+});
+
 app.patch('/api/projects/:id', (req, res) => {
   try {
     const project = findProject(req.params.id);
@@ -702,6 +1179,72 @@ app.post('/api/projects/:id/script/generate', async (req, res) => {
   const input = (req.body || {}) as ScriptGenerationInput;
   const db = readDb();
   const settings = db.settings;
+
+  // PDF 项目的讲稿是「一页一段」，重生成只能逐页重写。
+  // 走通用引擎会把整册按主题重排，顺带清空 slides —— 原页课件就全没了。
+  if (project.pdfImport) {
+    const pages = project.slides
+      .filter((slide) => Boolean(slide.pageImage))
+      .map((slide, position) => ({
+        index: (project.pdfImport?.from ?? 1) + position,
+        title: slide.title,
+        text: slide.note ?? '',
+        width: 0,
+        height: 0
+      }));
+    if (!pages.length) {
+      res.status(400).json({ error: '这个 PDF 项目找不到原页记录，请重新导入' });
+      return;
+    }
+    const averageSeconds = Math.max(
+      8,
+      Math.round(
+        project.slides.reduce((total, slide) => total + (slide.seconds || 0), 0) / project.slides.length
+      )
+    );
+    const startedAt = Date.now();
+    const result = await buildPdfNarration(
+      {
+        pages,
+        topic: project.topic || project.title,
+        subject: project.subject,
+        grade: project.grade,
+        secondsPerPage: averageSeconds
+      },
+      settings
+    );
+    const version = (project.script?.version ?? 0) + 1;
+    const script = buildPdfScript(project, result.sections);
+    script.version = version;
+    project.script = {
+      ...script,
+      comments: project.script?.comments ?? [],
+      confirmed: false
+    };
+    project.pdfImport = {
+      ...project.pdfImport,
+      scriptEngine: result.engine,
+      warnings: result.warnings
+    };
+    project.status = 'producing';
+    project.stage = 'script';
+    project.progress = 32;
+    invalidateProduction(project);
+    project.recordings = project.recordings.filter((asset) => asset.kind !== 'tts');
+    persistProject(project);
+    res.json({
+      project,
+      generation: {
+        engine: result.engine,
+        provider: result.engine === 'model' ? 'model' : 'local',
+        model: '',
+        durationMs: Date.now() - startedAt,
+        warnings: result.warnings
+      }
+    });
+    return;
+  }
+
   const engine = resolveEngine(db.engines, 'script', input.engineId);
   const payload: ScriptGenerationInput = {
     topic: input.topic || project.topic,
@@ -720,7 +1263,13 @@ app.post('/api/projects/:id/script/generate', async (req, res) => {
   let script: CourseScript;
   let generation: GenerationMeta;
   try {
-    const result = await generateScriptWithModel(payload, settings, version, db.memory);
+    const result = await generateScriptWithModel(
+      payload,
+      settings,
+      version,
+      db.memory,
+      agentBrief(db.agents, 'agent-design')
+    );
     script = result.script;
     generation = result.meta;
   } catch (error) {
@@ -1072,7 +1621,13 @@ app.post('/api/projects/:id/composer/suggest', async (req, res) => {
   try {
     const project = findProject(req.params.id);
     const settings = readDb().settings;
-    const result = await locateConceptAnchors(project, settings);
+    const db = readDb();
+    const result = await locateConceptAnchors(
+      project,
+      settings,
+      agentBrief(db.agents, 'agent-insight'),
+      memoryBrief(db.memory, true)
+    );
     res.json({
       anchors: result.anchors,
       source: result.source,
@@ -1095,33 +1650,52 @@ app.post('/api/projects/:id/composer/cards', async (req, res) => {
     const body = (req.body || {}) as Record<string, unknown>;
     const mediaKind = (String(body.mediaKind || 'quiz') as MediaKind) ?? 'quiz';
     const count = Math.min(Math.max(Number(body.count) || 3, 1), 6);
-    const result = await generateInteractiveCards(project, db.settings, {
-      kind: mediaKind,
-      count
-    });
+    const result = await generateInteractiveCards(
+      project,
+      db.settings,
+      { kind: mediaKind, count },
+      agentBrief(db.agents, 'agent-insight'),
+      memoryBrief(db.memory, true)
+    );
     const createdAt = new Date().toISOString();
-    const mounts: CourseMount[] = result.contents.map((content) => ({
-      id: makeId('mount'),
-      mediaKind,
-      title: content.title,
-      description: content.subtitle ?? '',
-      html: renderInteractiveCard(project, mediaKind, content),
-      concept: content.title,
-      atSeconds: Number(content.atSeconds.toFixed(2)),
-      endSeconds: Number((content.atSeconds + 10).toFixed(2)),
-      placement: 'below' as MediaTriggerPlacement,
-      source: 'agent' as const,
-      createdAt,
-      updatedAt: createdAt
-    }));
+    // 同一时刻的同名卡片只留一份：重复点“生成并挂载”不该在时间轴上叠出两层。
+    const taken = (project.mounts ?? []).slice();
+    const mounts: CourseMount[] = [];
+    for (const content of result.contents) {
+      const atSeconds = Number(content.atSeconds.toFixed(2));
+      const clash = taken.some(
+        (mount) =>
+          Math.abs(mount.atSeconds - atSeconds) < 1.5 && mount.title.trim() === content.title.trim()
+      );
+      if (clash) continue;
+      const mount: CourseMount = {
+        id: makeId('mount'),
+        mediaKind,
+        title: content.title,
+        description: content.subtitle ?? '',
+        html: renderInteractiveCard(project, mediaKind, content),
+        concept: content.title,
+        atSeconds,
+        endSeconds: Number((content.atSeconds + 10).toFixed(2)),
+        placement: 'below' as MediaTriggerPlacement,
+        source: 'agent' as const,
+        createdAt,
+        updatedAt: createdAt
+      };
+      mounts.push(mount);
+      taken.push(mount);
+    }
     project.mounts = [...(project.mounts ?? []), ...mounts].sort(
       (a, b) => a.atSeconds - b.atSeconds
     );
     persistProject(project);
+    const skipped = result.contents.length - mounts.length;
     res.json({
       project,
       source: result.source,
-      warning: result.warning ?? '',
+      warning: [result.warning, skipped > 0 ? `有 ${skipped} 张同一时刻的卡片已存在，未重复挂载。` : '']
+        .filter(Boolean)
+        .join(' '),
       count: mounts.length
     });
   } catch (error) {
@@ -1181,6 +1755,8 @@ app.post('/api/projects/:id/mounts', (req, res) => {
       atSeconds: Number(atSeconds.toFixed(2)),
       endSeconds: Math.max(atSeconds + 4, Number(body.endSeconds) || atSeconds + 8),
       placement: (String(body.placement || 'below') as MediaTriggerPlacement) ?? 'below',
+      hold:
+        typeof body.hold === 'boolean' ? body.hold : defaultHoldForMount(mediaKind),
       source: artifactId ? 'artifact' : 'manual',
       createdAt,
       updatedAt: createdAt
@@ -1188,6 +1764,13 @@ app.post('/api/projects/:id/mounts', (req, res) => {
     project.mounts = [...(project.mounts ?? []), mount].sort(
       (a, b) => a.atSeconds - b.atSeconds
     );
+    // 成片已就绪时，挂载就是当前所处的环节：下次打开直接落在挂载台。
+    if (project.render?.downloadReady) {
+      project.stage = 'mount';
+      project.progress = Math.max(project.progress, 92);
+    }
+    // 卡片变了，之前导出的学习工作台就是旧的，重新生成前不再当成品给出去。
+    project.delivery = undefined;
     persistProject(project);
     res.json(project);
   } catch (error) {
@@ -1220,6 +1803,10 @@ app.patch('/api/projects/:id/mounts/:mountId', (req, res) => {
           typeof body.placement === 'string'
             ? (body.placement as MediaTriggerPlacement)
             : mount.placement,
+        hold:
+          typeof body.hold === 'boolean'
+            ? body.hold
+            : mount.hold ?? defaultHoldForMount(mount.mediaKind),
         atSeconds: Number(atSeconds.toFixed(2)),
         endSeconds:
           body.endSeconds !== undefined
@@ -1233,6 +1820,11 @@ app.patch('/api/projects/:id/mounts/:mountId', (req, res) => {
       return;
     }
     project.mounts.sort((a, b) => a.atSeconds - b.atSeconds);
+    if (project.render?.downloadReady) {
+      project.stage = 'mount';
+      project.progress = Math.max(project.progress, 92);
+    }
+    project.delivery = undefined;
     persistProject(project);
     res.json(project);
   } catch (error) {
@@ -1253,6 +1845,7 @@ app.delete('/api/projects/:id/mounts/:mountId', (req, res) => {
       res.status(404).json({ error: '挂载卡片不存在' });
       return;
     }
+    project.delivery = undefined;
     persistProject(project);
     res.json(project);
   } catch (error) {
@@ -1296,6 +1889,7 @@ app.post('/api/projects/:id/actions', async (req, res) => {
         res.status(400).json({ error: '讲稿内容不能为空' });
         return;
       }
+      const beforeNarration = narrationText(project.script);
       project.script = {
         ...script,
         comments: project.script?.comments ?? [],
@@ -1305,6 +1899,11 @@ app.post('/api/projects/:id/actions', async (req, res) => {
       project.stage = 'script';
       project.status = 'producing';
       invalidateProduction(project);
+      // 讲稿正文改了，旧旁白就对不上画面了。不清掉的话，重渲染会直接复用老音轨，
+      // 出现「字幕是新稿、声音是旧稿」——这类错最难发现，因为两边都"没错"。
+      if (narrationText(project.script) !== beforeNarration) {
+        project.recordings = project.recordings.filter((asset) => asset.kind !== 'tts');
+      }
       if (project.script) project.script.confirmed = Boolean(req.body?.keepConfirmed && script.confirmed);
       persistProject(project);
       res.json(project);
@@ -1328,6 +1927,40 @@ app.post('/api/projects/:id/actions', async (req, res) => {
     }
 
     if (action === 'generate-slides') {
+      // PDF 导入的课件就是原讲义本身，页数和内容都不能让课件引擎重排——
+      // 这里只刷新页面文件，等于"重新生成一遍放映稿"，不换内容。
+      if (project.slides.some((slide) => slide.pageImage)) {
+        clearPageImageCache(project.id);
+        const total = project.slides.length;
+        project.slides = project.slides.map((slide) => ({
+          ...slide,
+          html: buildDeckSlideHtml(slide, project, total)
+        }));
+        const deck = writeDeck(project);
+        project.deck = {
+          ...(project.deck ?? { url: deck.url, slides: deck.slides, bytes: deck.bytes }),
+          url: deck.url,
+          slides: deck.slides,
+          bytes: deck.bytes,
+          engine: 'pdf-import',
+          generatedAt: now()
+        };
+        project.stage = 'slides';
+        project.status = 'review';
+        persistProject(project);
+        res.json({
+          project,
+          trace: project.trace,
+          generation: {
+            engine: 'pdf-import',
+            provider: 'local',
+            model: '原讲义页面',
+            durationMs: 0,
+            warnings: ['PDF 导入的课件按原页展示，未重新生成内容']
+          }
+        });
+        return;
+      }
       if (!project.script?.confirmed) {
         res.status(400).json({ error: '请先确认讲稿' });
         return;
@@ -1337,7 +1970,9 @@ app.post('/api/projects/:id/actions', async (req, res) => {
       let slides: CourseSlide[];
       let generation: GenerationMeta;
       const engineMode = String(engine?.config.mode || 'model-first');
-      const wantsHtmlPages = engineMode === 'html-white' || engineMode === 'html-interactive';
+      const wantsDeck = engineMode === 'frontend-slides';
+      const wantsHtmlPages =
+        wantsDeck || engineMode === 'html-white' || engineMode === 'html-interactive';
       try {
         if (wantsHtmlPages) {
           const result = await generateHtmlSlidesWithModel(project.script, settings, {
@@ -1351,10 +1986,15 @@ app.post('/api/projects/:id/actions', async (req, res) => {
             .map((item) => item.trim())
             .filter(Boolean);
           const engineDensity = String(engine?.config.visualDensity || 'balanced');
-          const result = await generateSlidesWithModel(project.script, settings, {
-            visualKinds: engineVisualKinds,
-            density: engineDensity
-          });
+          const result = await generateSlidesWithModel(
+            project.script,
+            settings,
+            {
+              visualKinds: engineVisualKinds,
+              density: engineDensity
+            },
+            agentBrief(readDb().agents, 'agent-slides')
+          );
           slides = result.slides;
           generation = result.meta;
         }
@@ -1368,7 +2008,7 @@ app.post('/api/projects/:id/actions', async (req, res) => {
         if (wantsHtmlPages) {
           slides = slides.map((slide) => ({
             ...slide,
-            html: slide.html ?? buildWhiteSlideHtml(slide, project)
+            html: slide.html && slide.html.trim() ? slide.html : buildWhiteSlideHtml(slide, project)
           }));
         }
         generation = {
@@ -1380,12 +2020,32 @@ app.post('/api/projects/:id/actions', async (req, res) => {
           error: message
         };
       }
+      // 讲稿与页面必须一一对应：模型多给或少给都在这里对齐。
+      slides = reconcileSlides(slides, project.script, { title: project.script.title });
       project.slides = applySlideEngine(slides, engine);
-      if (wantsHtmlPages) {
+      if (wantsDeck) {
+        // 每一页用与整册同一套样式单独出图，成片画面与放映课件完全一致。
+        const total = project.slides.length;
         project.slides = project.slides.map((slide) => ({
           ...slide,
-          html: slide.html ?? buildWhiteSlideHtml(slide, project)
+          html: buildDeckSlideHtml(slide, project, total)
         }));
+        const deck = writeDeck(project);
+        project.deck = {
+          url: deck.url,
+          slides: deck.slides,
+          bytes: deck.bytes,
+          engine: engine?.id,
+          generatedAt: now()
+        };
+      } else if (wantsHtmlPages) {
+        project.slides = project.slides.map((slide) => ({
+          ...slide,
+          // 空字符串不能用 ?? 兜底，否则会留下一个空页面让预览退回另一套版式。
+          html: slide.html && slide.html.trim() ? slide.html : buildWhiteSlideHtml(slide, project)
+        }));
+        // 换了非放映版式，旧的整册放映稿作废，避免"点放映看到的是上一版课件"。
+        project.deck = undefined;
       }
       project.selectedEngines = { ...project.selectedEngines, slides: engine?.id };
       project.generation = { ...project.generation, slides: generation };
@@ -1404,6 +2064,29 @@ app.post('/api/projects/:id/actions', async (req, res) => {
       const cover = project.slides.find((slide) => slide.layout === 'cover');
       if (cover) project.title = project.script.title;
       refreshTimeline(project);
+      persistProject(project);
+      res.json(project);
+      return;
+    }
+
+    if (action === 'build-deck') {
+      if (!project.slides.length) {
+        res.status(400).json({ error: '请先生成课件页面' });
+        return;
+      }
+      const total = project.slides.length;
+      project.slides = project.slides.map((slide) => ({
+        ...slide,
+        html: buildDeckSlideHtml(slide, project, total)
+      }));
+      const deck = writeDeck(project);
+      project.deck = {
+        url: deck.url,
+        slides: deck.slides,
+        bytes: deck.bytes,
+        engine: project.selectedEngines?.slides ?? 'engine-slides-deck',
+        generatedAt: now()
+      };
       persistProject(project);
       res.json(project);
       return;
@@ -1657,7 +2340,7 @@ app.post('/api/projects/:id/actions', async (req, res) => {
             progress: project.render?.progress ?? 0,
             updatedAt: now(),
             stageMessage: '渲染未完成',
-            error: error instanceof Error ? error.message : '成片渲染失败',
+            error: describeRenderError(error),
             downloadReady: false
           };
           persistProject(project);
@@ -1704,6 +2387,21 @@ app.post('/api/projects/:id/slides/:slideId', (req, res) => {
         ? ({ ...slide, ...req.body, id: slide.id } as CourseSlide)
         : slide
     );
+    if (project.deck) {
+      const total = project.slides.length;
+      project.slides = project.slides.map((slide) => ({
+        ...slide,
+        html: buildDeckSlideHtml(slide, project, total)
+      }));
+      const deck = writeDeck(project);
+      project.deck = {
+        ...project.deck,
+        url: deck.url,
+        slides: deck.slides,
+        bytes: deck.bytes,
+        generatedAt: now()
+      };
+    }
     refreshTimeline(project);
     persistProject(project);
     res.json(project);
@@ -2148,7 +2846,7 @@ app.post('/api/projects/:id/delivery/build', async (req, res) => {
 });
 
 app.post('/api/agents', (req, res) => {
-  const { name, role, description, model, skillIds } = req.body;
+  const { name, role, description, model, skillIds, expertise, method, constraints } = req.body;
   if (!name?.trim() || !role?.trim()) {
     res.status(400).json({ error: '请填写智能体名称和职责' });
     return;
@@ -2163,7 +2861,10 @@ app.post('/api/agents', (req, res) => {
     skillIds: Array.isArray(skillIds) ? skillIds : [],
     color: 'brick' as const,
     runs: 0,
-    lastRun: '尚未运行'
+    lastRun: '尚未运行',
+    expertise: Array.isArray(expertise) ? expertise.filter(Boolean).slice(0, 8) : [],
+    method: String(method || '').trim(),
+    constraints: Array.isArray(constraints) ? constraints.filter(Boolean).slice(0, 8) : []
   };
   mutateDb((db) => {
     db.agents.push(agent);
@@ -2620,6 +3321,74 @@ app.use((error: unknown, _req: ExpressRequest, res: ExpressResponse, next: NextF
   res.status(500).json({
     error: error instanceof Error ? error.message : '服务器处理失败，请重试'
   });
+});
+
+// 早先版本把浏览器 profile 建在项目的 slides 目录里，退出时未必删得掉。
+// 这些目录正是截图卡死的来源，启动时统一清一次。
+try {
+  for (const entry of fs.readdirSync(mediaRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const slideDir = path.join(mediaRoot, entry.name, 'slides');
+    if (!fs.existsSync(slideDir)) continue;
+    for (const leftover of fs.readdirSync(slideDir)) {
+      if (!leftover.startsWith('.chrome-')) continue;
+      try {
+        fs.rmSync(path.join(slideDir, leftover), { recursive: true, force: true, maxRetries: 2 });
+      } catch {
+        // 被占用就下次启动再删，不影响渲染。
+      }
+    }
+  }
+} catch {
+  // 数据目录读不到时不必阻断服务启动。
+}
+
+// 早期生成路径没写 slide.html，前端会退回另一套版式，导致"讲课看到一版、录出来另一版"。
+// 启动时统一补齐一次，老项目不用重新生成课件也能对齐。
+mutateDb((db) => {
+  let repaired = 0;
+  for (const project of db.projects) {
+    if (!project.slides?.length) continue;
+    if (!ensureSlideHtml(project)) continue;
+    if (project.deck) {
+      try {
+        const deck = writeDeck(project);
+        project.deck = {
+          ...project.deck,
+          url: deck.url,
+          slides: deck.slides,
+          bytes: deck.bytes,
+          generatedAt: now()
+        };
+      } catch {
+        // 整册重建失败不影响单页预览，下次保存时还会再试一次。
+      }
+    }
+    repaired += 1;
+  }
+  if (repaired) {
+    console.log(`rebuilt slide html for ${repaired} project(s)`);
+  }
+});
+
+// 进程重启后，上一轮标着 running 的渲染不可能再完成了（任务只活在内存里）。
+// 把它标成错误，老师回到界面就能直接重新渲染，而不是看着一个永远停在 22% 的进度条。
+mutateDb((db) => {
+  let repaired = 0;
+  for (const project of db.projects) {
+    if (project.render?.status !== 'running') continue;
+    project.render = {
+      ...project.render,
+      status: 'error',
+      updatedAt: now(),
+      stageMessage: '上次渲染被中断',
+      error: '上次渲染在服务重启时中断，请重新渲染'
+    };
+    repaired += 1;
+  }
+  if (repaired) {
+    console.log(`cleared ${repaired} interrupted render job(s)`);
+  }
 });
 
 app.listen(port, host, () => {

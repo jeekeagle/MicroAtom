@@ -9,7 +9,7 @@ import type {
 
 const BUILT_AT = '2026-10-29T00:00:00.000Z';
 const MODES: CourseMode[] = ['auto', 'oral', 'ppt'];
-const STAGES: StageKey[] = ['script', 'slides', 'audio', 'render'];
+const STAGES: StageKey[] = ['script', 'slides', 'audio', 'render', 'mount'];
 const ENGINE_STAGES: ProductionStage[] = [
   'analysis',
   'script',

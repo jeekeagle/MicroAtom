@@ -286,7 +286,7 @@ export function SlideCanvas({
         <iframe
           title={slide.title}
           srcDoc={slide.html}
-          sandbox="allow-same-origin allow-popups"
+          sandbox="allow-scripts allow-same-origin allow-popups"
         />
       </div>
     );

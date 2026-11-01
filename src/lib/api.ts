@@ -14,6 +14,7 @@ import type {
   MediaKind,
   MediaTriggerPlacement,
   ModelProfile,
+  PdfInspectResult,
   ProductionEngine,
   ProductionStage,
   RuntimeSettings,
@@ -55,6 +56,36 @@ export const api = {
 
   analyzeBrief: (input: AnalyzeBriefInput) =>
     request<AnalyzeBriefResult & { meta?: GenerationMeta }>('/api/projects/analyze-brief', {
+      method: 'POST',
+      body: JSON.stringify(input)
+    }),
+
+  /** 上传 PDF 先解析一次：拿到页数与标题，用来选页码范围。 */
+  inspectPdf: async (file: File): Promise<PdfInspectResult> => {
+    const response = await fetch(`/api/pdf/inspect?name=${encodeURIComponent(file.name)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/pdf' },
+      body: file
+    });
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+      throw new Error(payload?.error || `PDF 解析失败 (${response.status})`);
+    }
+    return response.json() as Promise<PdfInspectResult>;
+  },
+
+  /** 把已解析的 PDF 转成逐页课件，转换在后台跑，返回刚建好的项目。 */
+  importPdf: (input: {
+    token: string;
+    title: string;
+    subject?: string;
+    grade?: string;
+    from: number;
+    to: number;
+    secondsPerPage: number;
+    generateScript: boolean;
+  }) =>
+    request<CourseProject>('/api/projects/import-pdf', {
       method: 'POST',
       body: JSON.stringify(input)
     }),
